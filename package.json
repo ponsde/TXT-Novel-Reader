@@ -1,0 +1,54 @@
+{
+  "name": "elegant-reader",
+  "version": "1.0.0",
+  "description": "优雅阅读器",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build-win": "electron-builder --win --x64 --dir"
+  },
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.1.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.yourname.elegant-reader",
+    "productName": "优雅阅读器",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["x64"]
+        },
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "优雅阅读器"
+    },
+    "asar": true,
+    "electronVersion": "28.1.0",
+    "buildDependenciesFromSource": true,
+    "npmRebuild": false,
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    }
+  },
+  "dependencies": {
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  }
+}

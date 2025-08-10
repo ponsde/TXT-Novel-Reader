@@ -1,0 +1,1021 @@
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #f6f4ef;
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #333;
+    transition: all 0.3s ease;
+}
+
+/* 主题相关样式 */
+body.dark-mode {
+    background-color: #1a1a1a;
+    color: #ddd;
+}
+
+body.dark-mode .reader-container {
+    background-color: #2d2d2d;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.2);
+}
+
+body.warm {
+    background-color: #f8f0e5;
+}
+
+body.cool {
+    background-color: #e8f4f8;
+}
+
+body.green {
+    background-color: #e8f6e8;
+}
+
+.reader-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 20px;
+    position: relative;
+    display: block;
+    min-height: 700px;
+    padding-bottom: 20px;
+}
+
+.reader-header {
+    text-align: center;
+    padding: 20px 0 30px;
+    border-bottom: 1px solid #eee;
+    margin-bottom: 20px;
+    max-width: 1000px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.reader-settings {
+    margin-top: 15px;
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+    align-items: center;
+}
+
+.setting-btn {
+    padding: 8px 15px;
+    font-size: 14px;
+    background-color: #f0f0f0;
+    color: #333;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.setting-btn:hover {
+    background-color: #e0e0e0;
+}
+
+.font-size-control {
+    display: flex;
+    gap: 5px;
+}
+
+#theme-selector {
+    padding: 8px 15px;
+    border-radius: 4px;
+    border: 1px solid #ddd;
+    background-color: #fff;
+    font-size: 14px;
+    width: 120px;
+}
+
+.reader-header h1 {
+    font-size: 24px;
+    color: #2c3e50;
+    margin: 0;
+    font-weight: 500;
+}
+
+.reader-main {
+    display: flex;
+    gap: 20px;
+    position: relative;
+    margin: 0 auto;
+    max-width: 1200px;
+}
+
+.reader-content {
+    padding: 40px 80px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    line-height: 1.8;
+    font-size: 16px;
+    min-height: 600px;
+    margin-bottom: 20px;
+    width: 100%;
+    box-sizing: border-box;
+    display: block;
+}
+
+.reader-content p {
+    margin: 0.8em 0;
+    text-align: justify;
+    color: inherit;
+    text-indent: 2em;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 4px;
+    background-color: #eee;
+    margin: 20px 0;
+    border-radius: 2px;
+}
+
+.progress-inner {
+    height: 100%;
+    background-color: #3498db;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    width: 0;
+}
+
+.reader-controls {
+    background: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    text-align: center;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0 auto;
+    position: static;
+    bottom: auto;
+    left: auto;
+    transform: none;
+}
+
+.navigation-buttons {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 25px;
+    gap: 10px;
+}
+
+button {
+    padding: 10px 25px;
+    margin: 0 12px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 15px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+button:hover {
+    background-color: #2980b9;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+#page-info {
+    display: inline-block;
+    margin: 0 15px;
+    font-size: 16px;
+    color: #666;
+    font-weight: 500;
+    min-width: 100px;
+}
+
+input[type="file"] {
+    display: none;
+}
+
+.file-upload-label {
+    display: inline-block;
+    padding: 10px 20px;
+    background-color: #2ecc71;
+    color: white;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 15px;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    margin-bottom: 15px;
+}
+
+.file-upload-label:hover {
+    background-color: #27ae60;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+/* 夜间模式下的样式调整 */
+body.dark-mode .reader-content p {
+    color: #ddd;
+}
+
+body.dark-mode .setting-btn {
+    background-color: #444;
+    color: #ddd;
+}
+
+body.dark-mode #theme-selector {
+    background-color: #444;
+    color: #ddd;
+    border-color: #555;
+}
+
+body.dark-mode .progress-bar {
+    background-color: #444;
+}
+
+/* 添加章节导航相关样式 */
+.chapter-nav {
+    position: relative;
+    text-align: center;
+    margin: 10px 0;
+}
+
+.chapter-list {
+    position: fixed;
+    right: calc(50% - 500px - 70px + 70px);
+    top: 70%;
+    transform: translate(0, -50%);
+    width: 240px;
+    max-height: 70vh;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 15px;
+    overflow-y: auto;
+    z-index: 99;
+}
+
+.chapter-list.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.chapter-item {
+    padding: 12px 15px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-left: 3px solid transparent;
+}
+
+.chapter-item:hover {
+    background-color: #f5f5f5;
+}
+
+/* 当前章节高亮样式 */
+.chapter-item.active {
+    background-color: #e8f0fe;
+    border-left: 3px solid #3498db;
+    color: #3498db;
+    font-weight: 500;
+}
+
+/* 夜间模式下的章节列表样式 */
+body.dark-mode .chapter-list {
+    background-color: #2d2d2d;
+    border-color: #444;
+}
+
+body.dark-mode .chapter-item {
+    border-color: #444;
+}
+
+body.dark-mode .chapter-item:hover {
+    background-color: #383838;
+}
+
+/* 夜间模式下的当前章节样式 */
+body.dark-mode .chapter-item.active {
+    background-color: #2c3e50;
+    border-left-color: #3498db;
+    color: #3498db;
+}
+
+/* 添加加载提示样式 */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    backdrop-filter: blur(3px);
+}
+
+.loading-content {
+    background-color: white;
+    padding: 25px;
+    border-radius: 8px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    min-width: 250px;
+}
+
+.dark-mode .loading-content {
+    background-color: #333;
+    color: #fff;
+}
+
+.loading-spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1.5s linear infinite;
+    margin: 0 auto 15px;
+}
+
+.dark-mode .loading-spinner {
+    border-color: #444;
+    border-top-color: #3498db;
+}
+
+.loading-message {
+    font-size: 16px;
+    margin-top: 10px;
+    font-weight: 500;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.reader-sidebar {
+    position: fixed;
+    right: calc(50% - 500px - 70px);
+    top: 70%;
+    transform: translateY(-50%);
+    width: 60px;
+    background: #fff;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    z-index: 100;
+}
+
+.setting-item {
+    height: 50px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    border: none;
+    margin-bottom: 15px;
+    color: #999;
+}
+
+.setting-item:hover {
+    background: none;
+    color: #333;
+}
+
+.setting-item .icon {
+    font-size: 24px;
+    line-height: 1;
+}
+
+.setting-item:first-child .icon {
+    margin-top: -2px;
+}
+
+.setting-item span {
+    font-size: 12px;
+    color: inherit;
+}
+
+/* 设置面板样式 */
+.settings-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: white;
+    box-shadow: 0 2px 20px rgba(0,0,0,0.3);
+    border-radius: 10px;
+    padding: 20px;
+    width: 400px;
+    max-width: 90%;
+    z-index: 1100;
+    transition: all 0.3s ease;
+}
+
+.settings-panel.hidden {
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, -50%) scale(0.9);
+}
+
+.settings-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid #eee;
+}
+
+.settings-panel-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 500;
+    color: #333;
+}
+
+.close-btn {
+    background: transparent;
+    border: none;
+    color: #999;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.2s ease;
+}
+
+.close-btn:hover {
+    color: #333;
+}
+
+.settings-panel-content {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.setting-group {
+    margin-bottom: 20px;
+}
+
+.setting-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    color: #666;
+}
+
+.setting-group select,
+.setting-group input[type="range"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    margin-bottom: 8px;
+}
+
+.setting-group span {
+    display: block;
+    text-align: right;
+    font-size: 12px;
+    color: #999;
+}
+
+/* 深色模式设置面板 */
+body.dark-mode .settings-panel {
+    background-color: #2d2d2d;
+    box-shadow: 0 2px 20px rgba(0,0,0,0.5);
+}
+
+body.dark-mode .settings-panel-header {
+    border-bottom-color: #444;
+}
+
+body.dark-mode .settings-panel-header h3 {
+    color: #ddd;
+}
+
+body.dark-mode .close-btn {
+    color: #999;
+}
+
+body.dark-mode .close-btn:hover {
+    color: #ccc;
+}
+
+body.dark-mode .setting-group label {
+    color: #bbb;
+}
+
+body.dark-mode .setting-group select,
+body.dark-mode .setting-group input[type="range"] {
+    background-color: #383838;
+    border-color: #444;
+    color: #ddd;
+}
+
+body.dark-mode .setting-group span {
+    color: #999;
+}
+
+/* 响应式设计 */
+@media (max-width: 1400px) {
+    .reader-container {
+        max-width: 100%;
+        margin: 0;
+        padding: 20px;
+    }
+
+    .reader-sidebar {
+        right: 20px;
+    }
+
+    .chapter-list {
+        right: 90px;
+    }
+}
+
+@media (max-width: 1200px) {
+    .reader-container {
+        padding: 20px;
+    }
+
+    .reader-main,
+    .reader-header,
+    .reader-controls {
+        max-width: 100%;
+    }
+
+    .reader-main {
+        flex-direction: column;
+    }
+
+    .reader-content {
+        max-width: none;
+    }
+
+    .reader-sidebar {
+        right: 20px;
+        top: auto;
+        bottom: 100px;
+    }
+
+    .chapter-list {
+        right: 90px;
+        top: auto;
+        bottom: 100px;
+        transform: none;
+    }
+
+    .reader-controls {
+        width: calc(100% - 40px);
+        max-width: none;
+    }
+}
+
+@media (max-width: 768px) {
+    .reader-sidebar {
+        bottom: 20px;
+    }
+
+    .setting-item {
+        width: 25%;
+        height: 100%;
+    }
+
+    .setting-panel {
+        right: 0;
+        bottom: 60px;
+        top: auto;
+        width: 100%;
+    }
+
+    .chapter-list {
+        bottom: 20px;
+        max-height: 300px;
+    }
+}
+
+/* 夜间模式适配 */
+body.dark-mode .reader-content,
+body.dark-mode .reader-controls,
+body.dark-mode .sidebar-section,
+body.dark-mode .chapter-list {
+    background-color: #2d2d2d;
+}
+
+body.dark-mode .reader-sidebar {
+    background: #2d2d2d;
+}
+
+body.dark-mode .setting-item {
+    border-color: #444;
+}
+
+body.dark-mode .setting-btn {
+    color: #bbb;
+}
+
+body.dark-mode .setting-btn:hover {
+    background: #383838;
+    color: #fff;
+}
+
+/* 恢复右侧功能栏样式 */
+.reader-sidebar {
+    position: fixed;
+    right: calc(50% - 500px - 70px);
+    top: 70%;
+    transform: translateY(-50%);
+    width: 60px;
+    background: #fff;
+    box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+    border-radius: 8px;
+    z-index: 100;
+}
+
+/* 语音面板位置 */
+.speech-panel {
+    position: fixed;
+    left: calc(50% - 500px - 70px + 70px);
+    top: 70%;
+    transform: translateY(-50%);
+    width: 280px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    padding: 20px;
+    z-index: 99;
+}
+
+.speech-panel.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.speech-panel h3 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    color: #333;
+}
+
+.speech-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+/* 历史记录样式改进 */
+.history-list {
+    padding: 20px;
+    font-size: 16px;
+}
+
+.history-list h2 {
+    margin-bottom: 20px;
+    color: #333;
+    font-size: 1.5em;
+}
+
+.history-items {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.history-item {
+    padding: 15px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+}
+
+.history-item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.history-info {
+    flex: 1;
+}
+
+.history-title {
+    font-size: 18px;
+    margin-bottom: 8px;
+    color: #2c3e50;
+    font-weight: 500;
+}
+
+.history-date, .history-progress {
+    font-size: 14px;
+    color: #7f8c8d;
+    margin-bottom: 5px;
+}
+
+.history-delete {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background-color: #f0f0f0;
+    color: #999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s ease;
+}
+
+.history-delete:hover {
+    background-color: #ff4444;
+    color: white;
+}
+
+.no-history {
+    text-align: center;
+    color: #666;
+    padding: 20px;
+    font-size: 16px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.clear-history-btn {
+    padding: 8px 15px;
+    background-color: #ff4444;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.clear-history-btn:hover {
+    background-color: #ff6666;
+}
+
+/* 夜间模式适配 */
+body.dark-mode .history-item {
+    background: #2d2d2d;
+}
+
+body.dark-mode .history-title {
+    color: #ddd;
+}
+
+body.dark-mode .history-date,
+body.dark-mode .history-progress {
+    color: #999;
+}
+
+body.dark-mode .no-history {
+    color: #999;
+}
+
+body.dark-mode .history-delete {
+    background-color: #444;
+    color: #bbb;
+}
+
+body.dark-mode .history-delete:hover {
+    background-color: #ff4444;
+    color: white;
+}
+
+/* 历史记录右键菜单 */
+#history-context-menu {
+    z-index: 1050;
+}
+
+/* 右键菜单样式 */
+.context-menu {
+    position: absolute;
+    background-color: white;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    border-radius: 6px;
+    z-index: 1000;
+    width: 180px;
+    overflow: hidden;
+}
+
+.context-menu-item {
+    padding: 10px 15px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.context-menu-item:hover {
+    background-color: #f0f0f0;
+}
+
+body.dark-mode .context-menu {
+    background-color: #383838;
+    color: #ddd;
+}
+
+body.dark-mode .context-menu-item:hover {
+    background-color: #454545;
+}
+
+/* 通知样式 */
+.notification {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    background-color: rgba(52, 152, 219, 0.9);
+    color: white;
+    padding: 15px 20px;
+    border-radius: 6px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    z-index: 2000;
+    font-size: 14px;
+    opacity: 1;
+    transition: opacity 0.5s ease;
+}
+
+.notification.fadeout {
+    opacity: 0;
+}
+
+body.dark-mode .notification {
+    background-color: rgba(41, 128, 185, 0.9);
+}
+
+/* 文本选择样式 */
+::selection {
+    background-color: rgba(52, 152, 219, 0.3);
+    color: inherit;
+}
+
+body.dark-mode ::selection {
+    background-color: rgba(41, 128, 185, 0.5);
+}
+
+/* 进度指示器样式 */
+.progress-indicator {
+    margin-bottom: 15px;
+    display: block;
+}
+
+.progress-bar {
+    height: 8px;
+    background-color: #eee;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 5px;
+}
+
+.progress-inner {
+    height: 100%;
+    background-color: #3498db;
+    border-radius: 4px;
+    width: 0;
+    transition: width 0.3s ease;
+}
+
+.progress-text {
+    text-align: right;
+    font-size: 14px;
+    color: #666;
+}
+
+body.dark-mode .progress-bar {
+    background-color: #444;
+}
+
+body.dark-mode .progress-text {
+    color: #aaa;
+}
+
+/* 翻页选项样式 */
+.reading-options {
+    margin-top: 15px;
+    display: flex;
+    justify-content: center;
+}
+
+.option-label {
+    display: flex;
+    align-items: center;
+    font-size: 14px;
+    color: #666;
+}
+
+#page-turn-mode {
+    margin-left: 10px;
+    padding: 5px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #fff;
+    font-size: 14px;
+    color: #333;
+}
+
+body.dark-mode .option-label {
+    color: #bbb;
+}
+
+body.dark-mode #page-turn-mode {
+    background-color: #333;
+    border-color: #555;
+    color: #ddd;
+}
+
+/* 滚动模式样式 */
+.reader-content.scroll-mode {
+    max-height: 600px;
+    overflow-y: auto;
+    padding: 40px 70px;
+}
+
+.reader-content.scroll-mode::-webkit-scrollbar {
+    width: 10px;
+}
+
+.reader-content.scroll-mode::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 5px;
+}
+
+.reader-content.scroll-mode::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 5px;
+}
+
+.reader-content.scroll-mode::-webkit-scrollbar-thumb:hover {
+    background: #aaa;
+}
+
+body.dark-mode .reader-content.scroll-mode::-webkit-scrollbar-track {
+    background: #2d2d2d;
+}
+
+body.dark-mode .reader-content.scroll-mode::-webkit-scrollbar-thumb {
+    background: #555;
+}
+
+body.dark-mode .reader-content.scroll-mode::-webkit-scrollbar-thumb:hover {
+    background: #777;
+}
+
+/* 滚动模式章节标题样式 */
+.chapter-title {
+    font-size: 1.5em;
+    color: #3498db;
+    margin: 30px 0 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+    font-weight: 500;
+    text-align: center;
+}
+
+body.dark-mode .chapter-title {
+    color: #5dade2;
+    border-bottom-color: #444;
+}
+
+/* 滚动模式下的页码标记样式 */
+.page-marker {
+    font-size: 1.2em;
+    color: #3498db;
+    margin: 25px 0 15px;
+    padding: 10px 0;
+    border-bottom: 1px dashed #eee;
+    text-align: center;
+    background-color: rgba(52, 152, 219, 0.05);
+    border-radius: 4px;
+}
+
+body.dark-mode .page-marker {
+    color: #5dade2;
+    border-bottom-color: #444;
+    background-color: rgba(52, 152, 219, 0.1);
+}
+
+/* 改进滚动模式内容样式 */
+.reader-content.scroll-mode {
+    padding: 40px 70px;
+}
+
+body.dark-mode #page-info {
+    color: #aaa;
+}
