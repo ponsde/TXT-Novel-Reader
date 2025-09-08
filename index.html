@@ -1921,6 +1921,11 @@
             chapters = [];
             updateHistoryDisplay();
             
+            // 滚动到顶部，确保首页从顶部开始
+            window.scrollTo(0, 0);
+            const content = document.getElementById('content');
+            if (content) content.scrollTop = 0;
+            
             // 应用主页字体大小
             applyHomePageFontSize();
         }
