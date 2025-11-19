@@ -7,18 +7,19 @@
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/gbk.js@0.3.0/dist/gbk.min.js"></script>
     <script>
-        // 安全地引入 Electron
-        let ipcRenderer;
-        try {
-            const electron = require('electron');
-            ipcRenderer = electron.ipcRenderer;
-            console.log('Electron 成功加载');
-        } catch (error) {
-            console.error('Electron 加载失败:', error);
-            // 提供一个模拟对象以避免错误
-            ipcRenderer = {
-                invoke: () => Promise.resolve(null)
-            };
+        const electronAPI = window.electronAPI || {
+            readFile: async () => null,
+            searchFile: async () => null,
+            loadConfig: async () => ({}),
+            saveConfig: async () => null,
+            getRandomFile: async () => null,
+            resetRandomState: async () => null,
+            selectDirectory: async () => null,
+            findAndOpenFileLocation: async () => ({ success: false })
+        };
+
+        if (!window.electronAPI) {
+            console.warn('Electron API 未注入，部分功能可能无法使用');
         }
     </script>
 </head>
@@ -878,7 +879,7 @@
         function toggleTheme() {
             document.body.classList.toggle('dark-mode');
             // 保存主题设置到配置文件
-            ipcRenderer.invoke('save-config', {
+            electronAPI.saveConfig({
                 theme: document.body.classList.contains('dark-mode') ? 'dark' : 'light'
             });
         }
@@ -1113,11 +1114,11 @@
             const currentDir = searchDirectories[0];
             const remainingDirs = searchDirectories.slice(1);
             
-            ipcRenderer.invoke('search-file', currentDir, fileName)
+            electronAPI.searchFile(currentDir, fileName)
                 .then(filePath => {
                     if (filePath) {
                         document.querySelector('.loading-message').textContent = `正在加载文件: ${fileName}...`;
-                        return ipcRenderer.invoke('read-file', filePath);
+                        return electronAPI.readFile(filePath);
                     } else {
                         // 如果在当前目录没找到，尝试下一个目录
                         if (remainingDirs.length > 0) {
@@ -1437,7 +1438,7 @@
                         searchDirs.splice(index, 1);
                         
                         // 保存配置
-                        await ipcRenderer.invoke('save-config', { 
+                        await electronAPI.saveConfig({
                             searchDirs: searchDirs
                         });
                         
@@ -1461,7 +1462,7 @@
         // 选择自定义路径函数 - 仅选择路径，不加载书籍
         async function selectCustomPath() {
             try {
-                const newPath = await ipcRenderer.invoke('select-directory');
+                const newPath = await electronAPI.selectDirectory();
                 if (newPath) {
                     // 保存新路径作为默认路径
                     baseDir = newPath;
@@ -1472,7 +1473,7 @@
                     }
                     
                     // 保存配置
-                    await ipcRenderer.invoke('save-config', { 
+                    await electronAPI.saveConfig({
                         baseDir: newPath,
                         searchDirs: searchDirs
                     });
@@ -1846,7 +1847,7 @@
         // 修改加载配置的函数
         async function loadConfig() {
             try {
-                const config = await ipcRenderer.invoke('load-config');
+                const config = await electronAPI.loadConfig();
                 // 使用配置值
                 baseDir = config.baseDir || 'E:\\18\\utf';
                 searchDirs = config.searchDirs || [];
@@ -1938,13 +1939,13 @@
                 document.getElementById('loading-overlay').style.display = 'flex';
                 
                 // 获取随机文件
-                const filePath = await ipcRenderer.invoke('get-random-file', baseDir);
+                const filePath = await electronAPI.getRandomFile(baseDir);
                 if (!filePath) {
                     throw new Error('没有找到任何 TXT 文件');
                 }
 
                 // 获取文件内容
-                const data = await ipcRenderer.invoke('read-file', filePath);
+                const data = await electronAPI.readFile(filePath);
                 const decoder = new TextDecoder('utf-8');
                 const text = decoder.decode(data);
                 
@@ -1991,7 +1992,7 @@
                 const searchPaths = [baseDir].concat(searchDirs);
                 
                 // 查找文件并打开其所在目录
-                const result = await ipcRenderer.invoke('find-and-open-file-location', searchPaths, fileName);
+                const result = await electronAPI.findAndOpenFileLocation(searchPaths, fileName);
                 
                 if (result.success) {
                     showNotification(`已打开文件所在位置: ${result.filePath}`);
@@ -2013,7 +2014,7 @@
                 document.getElementById('loading-overlay').style.display = 'flex';
                 document.querySelector('.loading-message').textContent = '正在重置随机状态...';
                 
-                const result = await ipcRenderer.invoke('reset-random-state');
+                const result = await electronAPI.resetRandomState();
                 
                 if (result) {
                     showNotification('随机状态已重置，所有书籍将重新参与随机');
