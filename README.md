@@ -58,6 +58,11 @@ npm run build
 └── build/             # 构建输出目录
 ```
 
+## 数据存储位置
+
+- 配置文件 (`config.json`) 与随机状态 (`random_state.json`) 均存储于 Electron 的用户数据目录（`app.getPath('userData')`）。
+- 应用启动时会自动将旧版本存放在可执行文件所在目录的配置或随机状态迁移至用户数据目录。
+
 ## 开发说明
 
 这是一个开源的桌面阅读应用，欢迎提交 Issue 和 Pull Request。
