@@ -8,6 +8,30 @@ let randomizedBooks = [];
 let allAvailableBooks = [];
 const RANDOM_STATE_FILE = 'random_state.json';
 const CONFIG_FILE = 'config.json';
+const USER_STATE_FILE = 'user_state.json';
+const USER_STATE_SAVE_DELAY = 500;
+
+function getDefaultUserState() {
+    return {
+        theme: 'light',
+        readerSettings: {
+            fontSize: 18,
+            homePageFontSize: 16,
+            fontFamily: "'Microsoft YaHei', 'PingFang SC', sans-serif",
+            lineHeight: '1.8',
+            letterSpacing: '0',
+            paragraphSpacing: '0.8',
+            pageTurnMode: 'page'
+        },
+        allBookProgress: {},
+        readingHistory: [],
+        pendingRestore: null
+    };
+}
+
+let pendingUserState = null;
+let userStateSaveTimer = null;
+let userStateWriting = false;
 
 async function ensureUserDataDir() {
     const userDataPath = app.getPath('userData');
@@ -49,6 +73,71 @@ async function migrateDataFile(fileName) {
 async function migrateDataFiles() {
     await migrateDataFile(RANDOM_STATE_FILE);
     await migrateDataFile(CONFIG_FILE);
+}
+
+async function readUserState() {
+    try {
+        const stateFilePath = await getDataFilePath(USER_STATE_FILE);
+        if (!fs.existsSync(stateFilePath)) {
+            return getDefaultUserState();
+        }
+
+        const data = await fsPromises.readFile(stateFilePath, 'utf8');
+        const parsed = JSON.parse(data);
+        return {
+            ...getDefaultUserState(),
+            ...parsed,
+            readerSettings: {
+                ...getDefaultUserState().readerSettings,
+                ...(parsed.readerSettings || {})
+            },
+            allBookProgress: parsed.allBookProgress || {},
+            readingHistory: parsed.readingHistory || [],
+            pendingRestore: parsed.pendingRestore || null
+        };
+    } catch (error) {
+        console.error('读取用户状态失败，使用默认值:', error);
+        return getDefaultUserState();
+    }
+}
+
+async function writeUserState(state) {
+    const stateFilePath = await getDataFilePath(USER_STATE_FILE);
+
+    if (userStateWriting) {
+        pendingUserState = state;
+        return;
+    }
+
+    userStateWriting = true;
+    try {
+        await fsPromises.writeFile(stateFilePath, JSON.stringify(state, null, 4));
+    } catch (error) {
+        console.error('保存用户状态失败:', error);
+    } finally {
+        userStateWriting = false;
+
+        if (pendingUserState) {
+            const nextState = pendingUserState;
+            pendingUserState = null;
+            await writeUserState(nextState);
+        }
+    }
+}
+
+function scheduleUserStateSave(state) {
+    pendingUserState = state;
+
+    if (userStateSaveTimer) {
+        clearTimeout(userStateSaveTimer);
+    }
+
+    userStateSaveTimer = setTimeout(() => {
+        if (pendingUserState) {
+            writeUserState(pendingUserState);
+            pendingUserState = null;
+        }
+    }, USER_STATE_SAVE_DELAY);
 }
 
 // 加载随机状态
@@ -126,6 +215,14 @@ app.on('window-all-closed', () => {
     }
 });
 
+app.on('before-quit', async () => {
+    if (pendingUserState) {
+        const stateToSave = pendingUserState;
+        pendingUserState = null;
+        await writeUserState(stateToSave);
+    }
+});
+
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -150,6 +247,16 @@ ipcMain.handle('reset-random-state', async () => {
     }
 });
 
+// 用户状态持久化
+ipcMain.handle('load-user-state', async () => {
+    return await readUserState();
+});
+
+ipcMain.handle('save-user-state', async (event, state) => {
+    scheduleUserStateSave(state || getDefaultUserState());
+    return true;
+});
+
 // 处理读取文件请求
 ipcMain.handle('read-file', async (event, filePath) => {
     try {
@@ -163,33 +270,9 @@ ipcMain.handle('read-file', async (event, filePath) => {
 
 // 修改文件搜索处理
 ipcMain.handle('search-file', async (event, baseDir, fileName) => {
-    async function searchInDir(dir) {
-        try {
-            const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    try {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } catch (error) {
-                        console.error(`搜索目录 ${fullPath} 时出错:`, error);
-                        continue;
-                    }
-                } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                    return fullPath;
-                }
-            }
-        } catch (error) {
-            console.error(`读取目录 ${dir} 时出错:`, error);
-        }
-        return null;
-    }
-    
     try {
         console.log('开始搜索文件:', fileName, '在目录:', baseDir);
-        const result = await searchInDir(baseDir);
+        const result = await searchFileWithCache(baseDir, fileName);
         console.log('搜索结果:', result);
         return result;
     } catch (error) {
@@ -317,26 +400,167 @@ ipcMain.handle('select-directory', async () => {
   }
 });
 
-// 递归获取所有 TXT 文件
+const MAX_SCAN_DEPTH = 10;
+const MAX_FILE_COUNT = 20000;
+const dirScanCache = new Map();
+const searchCache = new Map();
+
+function isRecoverableFsError(error) {
+    return ['ENOENT', 'EACCES', 'EPERM'].includes(error.code);
+}
+
+async function safeReaddir(directory) {
+    try {
+        return await fsPromises.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+        if (isRecoverableFsError(error)) {
+            console.warn(`跳过无法访问的目录 ${directory}:`, error.message);
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function safeStat(targetPath) {
+    try {
+        return await fsPromises.stat(targetPath);
+    } catch (error) {
+        if (isRecoverableFsError(error)) {
+            console.warn(`跳过无法访问的路径 ${targetPath}:`, error.message);
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function getDirectorySignature(dir) {
+    const stat = await safeStat(dir);
+    if (!stat) return null;
+    return `${stat.mtimeMs}-${stat.size}`;
+}
+
+// 递归获取所有 TXT 文件，带深度和数量限制
 async function getAllTxtFiles(dir) {
+    const cachedSignature = await getDirectorySignature(dir);
+    if (cachedSignature && dirScanCache.has(dir)) {
+        const cached = dirScanCache.get(dir);
+        if (cached.signature === cachedSignature) {
+            return cached.files;
+        }
+    }
+
     const files = [];
-    
-    async function scan(directory) {
-        const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-        
+    let totalFilesScanned = 0;
+    let limitReached = false;
+
+    async function scan(directory, depth = 0) {
+        if (depth > MAX_SCAN_DEPTH) {
+            console.warn(`已达到最大递归深度，停止继续扫描：${directory}`);
+            return;
+        }
+
+        if (limitReached) return;
+
+        const entries = await safeReaddir(directory);
+        if (!entries) return;
+
         for (const entry of entries) {
+            if (limitReached) break;
+
             const fullPath = path.join(directory, entry.name);
-            
+
+            if (entry.isSymbolicLink()) {
+                console.warn(`跳过符号链接：${fullPath}`);
+                continue;
+            }
+
             if (entry.isDirectory()) {
-                await scan(fullPath);
-            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
-                files.push(fullPath);
+                await scan(fullPath, depth + 1);
+            } else if (entry.isFile()) {
+                totalFilesScanned += 1;
+                if (totalFilesScanned > MAX_FILE_COUNT) {
+                    console.warn('已达到最大文件扫描数量，提前结束');
+                    limitReached = true;
+                    break;
+                }
+
+                if (entry.name.toLowerCase().endsWith('.txt')) {
+                    files.push(fullPath);
+                }
             }
         }
     }
-    
+
     await scan(dir);
+
+    if (cachedSignature) {
+        dirScanCache.set(dir, { signature: cachedSignature, files });
+    }
+
     return files;
+}
+
+async function searchFileWithCache(baseDir, fileName) {
+    const cacheKey = `${baseDir}::${fileName.toLowerCase()}`;
+    const signature = await getDirectorySignature(baseDir);
+
+    if (signature && searchCache.has(cacheKey)) {
+        const cached = searchCache.get(cacheKey);
+        if (cached.signature === signature) {
+            return cached.result;
+        }
+    }
+
+    let foundPath = null;
+    let totalFilesScanned = 0;
+    let limitReached = false;
+
+    async function searchInDir(dir, depth = 0) {
+        if (depth > MAX_SCAN_DEPTH) {
+            console.warn(`已达到最大递归深度，停止搜索：${dir}`);
+            return;
+        }
+
+        if (limitReached || foundPath) return;
+
+        const entries = await safeReaddir(dir);
+        if (!entries) return;
+
+        for (const entry of entries) {
+            if (limitReached || foundPath) break;
+
+            const fullPath = path.join(dir, entry.name);
+
+            if (entry.isSymbolicLink()) {
+                console.warn(`跳过符号链接：${fullPath}`);
+                continue;
+            }
+
+            if (entry.isDirectory()) {
+                await searchInDir(fullPath, depth + 1);
+            } else if (entry.isFile()) {
+                totalFilesScanned += 1;
+                if (totalFilesScanned > MAX_FILE_COUNT) {
+                    console.warn('搜索达到最大文件数量限制，提前结束');
+                    limitReached = true;
+                    break;
+                }
+
+                if (entry.name.toLowerCase() === fileName.toLowerCase()) {
+                    foundPath = fullPath;
+                    break;
+                }
+            }
+        }
+    }
+
+    await searchInDir(baseDir);
+
+    if (signature) {
+        searchCache.set(cacheKey, { signature, result: foundPath });
+    }
+
+    return foundPath;
 }
 
 // 添加保存配置的处理函数
@@ -401,29 +625,5 @@ ipcMain.handle('find-and-open-file-location', async (event, searchPaths, fileNam
 
 // 在目录中查找文件的辅助函数
 async function findFileInDirectory(dir, fileName) {
-    async function searchInDir(directory) {
-        try {
-            const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const fullPath = path.join(directory, entry.name);
-                if (entry.isDirectory()) {
-                    try {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } catch (error) {
-                        console.error(`搜索子目录 ${fullPath} 时出错:`, error);
-                        continue;
-                    }
-                } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                    return fullPath;
-                }
-            }
-        } catch (error) {
-            console.error(`读取目录 ${directory} 时出错:`, error);
-        }
-        return null;
-    }
-    
-    return await searchInDir(dir);
+    return await searchFileWithCache(dir, fileName);
 }
