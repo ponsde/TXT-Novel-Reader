@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:;">
     <title>优雅阅读器</title>
     <link rel="stylesheet" href="styles.css">
     <script src="./vendor/gbk.min.js" integrity="sha384-AxJZIIntdB1EckoqwHcbDPL3FnaGC0fNOK2faQvjtVMFcizbtXzDFTbF/kauGO+Y" crossorigin="anonymous"></script>
@@ -37,7 +38,7 @@
         <div class="reader-header">
             <h1 id="book-title">优雅阅读器</h1>
         </div>
-        
+
         <div class="reader-main">
             <div class="reader-content" id="content">
                 <p>请选择一个 TXT 文件开始阅读</p>
@@ -45,9 +46,9 @@
                 <p style="color: #666; font-size: 14px;">支持多种编码格式：UTF-8、GBK、Big5、Shift-JIS、EUC-KR、UTF-16等</p>
                 <p style="color: #666; font-size: 14px;">提示：在主页和阅读页面可以分别调整字体大小</p>
             </div>
-            
+
             <div class="reader-sidebar">
-                <div class="setting-item">
+                <div class="setting-item" id="pick-file-btn">
                     <label for="file-input" class="setting-item">
                         <i class="icon">📂</i>
                         <span>选择</span>
@@ -58,27 +59,27 @@
                     <i class="icon">🎲</i>
                     <span>随机</span>
                 </div>
-                <div class="setting-item" onclick="toggleChapterList()">
+                <div class="setting-item" id="toggle-chapters">
                     <i class="icon">≡</i>
                     <span>目录</span>
                 </div>
-                <div class="setting-item" onclick="toggleTheme()">
+                <div class="setting-item" id="toggle-theme">
                     <i class="icon">☾</i>
                     <span>夜间</span>
                 </div>
-                <div class="setting-item" onclick="toggleFontSettings()">
+                <div class="setting-item" id="toggle-font-panel">
                     <i class="icon">Aa</i>
                     <span>字体</span>
                 </div>
-                <div class="setting-item" onclick="changeFontSize(1)">
+                <div class="setting-item" id="font-size-up">
                     <i class="icon">A+</i>
                     <span>增大</span>
                 </div>
-                <div class="setting-item" onclick="changeFontSize(-1)">
+                <div class="setting-item" id="font-size-down">
                     <i class="icon">A-</i>
                     <span>减小</span>
                 </div>
-                <div class="setting-item" onclick="backToHome()">
+                <div class="setting-item" id="go-home">
                     <i class="icon">⌂</i>
                     <span>主页</span>
                 </div>
@@ -95,9 +96,9 @@
                 </div>
             </div>
             <div class="navigation-buttons">
-                <button onclick="previousPage()">上一页</button>
+                <button id="prev-page">上一页</button>
                 <span id="page-info">第 1 页</span>
-                <button onclick="nextPage()">下一页</button>
+                <button id="next-page">下一页</button>
             </div>
             <div class="reading-options">
                 <label class="option-label">翻页方式:
@@ -112,24 +113,22 @@
 
     <div id="chapter-list" class="chapter-list hidden"></div>
 
-    <!-- 自定义右键菜单 -->
     <div id="context-menu" class="context-menu" style="display: none;">
-        <div class="context-menu-item" id="menu-copy">复制选中文本</div>
-        <div class="context-menu-item" id="menu-translate">翻译选中文本</div>
-        <div class="context-menu-item" id="menu-search">搜索选中文本</div>
-        <div class="context-menu-item" id="menu-tts">朗读选中文本</div>
+        <div class="context-menu-item" data-action="copy">复制选中文本</div>
+        <div class="context-menu-item" data-action="translate">翻译选中文本</div>
+        <div class="context-menu-item" data-action="search">搜索选中文本</div>
+        <div class="context-menu-item" data-action="tts">朗读选中文本</div>
     </div>
 
-    <!-- 字体设置面板 -->
     <div id="font-settings-panel" class="settings-panel hidden">
         <div class="settings-panel-header">
             <h3>字体设置</h3>
-            <button class="close-btn" onclick="toggleFontSettings()">×</button>
+            <button class="close-btn" id="close-font-panel">×</button>
         </div>
         <div class="settings-panel-content">
             <div class="setting-group">
                 <label>字体：</label>
-                <select id="font-family-selector" onchange="changeFontFamily()">
+                <select id="font-family-selector">
                     <option value="'Microsoft YaHei', 'PingFang SC', sans-serif">微软雅黑</option>
                     <option value="'SimSun', serif">宋体</option>
                     <option value="'KaiTi', serif">楷体</option>
@@ -140,17 +139,17 @@
             </div>
             <div class="setting-group">
                 <label>行高：</label>
-                <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.1" value="1.8" onchange="changeLineHeight()">
+                <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.1" value="1.8">
                 <span id="line-height-value">1.8</span>
             </div>
             <div class="setting-group">
                 <label>字间距：</label>
-                <input type="range" id="letter-spacing-slider" min="0" max="0.15" step="0.01" value="0" onchange="changeLetterSpacing()">
+                <input type="range" id="letter-spacing-slider" min="0" max="0.15" step="0.01" value="0">
                 <span id="letter-spacing-value">0</span>
             </div>
             <div class="setting-group">
                 <label>段落间距：</label>
-                <input type="range" id="paragraph-spacing-slider" min="0.6" max="2" step="0.1" value="0.8" onchange="changeParagraphSpacing()">
+                <input type="range" id="paragraph-spacing-slider" min="0.6" max="2" step="0.1" value="0.8">
                 <span id="paragraph-spacing-value">0.8em</span>
             </div>
         </div>
