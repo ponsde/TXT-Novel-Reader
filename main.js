@@ -163,33 +163,9 @@ ipcMain.handle('read-file', async (event, filePath) => {
 
 // 修改文件搜索处理
 ipcMain.handle('search-file', async (event, baseDir, fileName) => {
-    async function searchInDir(dir) {
-        try {
-            const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    try {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } catch (error) {
-                        console.error(`搜索目录 ${fullPath} 时出错:`, error);
-                        continue;
-                    }
-                } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                    return fullPath;
-                }
-            }
-        } catch (error) {
-            console.error(`读取目录 ${dir} 时出错:`, error);
-        }
-        return null;
-    }
-    
     try {
         console.log('开始搜索文件:', fileName, '在目录:', baseDir);
-        const result = await searchInDir(baseDir);
+        const result = await searchFileWithCache(baseDir, fileName);
         console.log('搜索结果:', result);
         return result;
     } catch (error) {
@@ -317,26 +293,167 @@ ipcMain.handle('select-directory', async () => {
   }
 });
 
-// 递归获取所有 TXT 文件
+const MAX_SCAN_DEPTH = 10;
+const MAX_FILE_COUNT = 20000;
+const dirScanCache = new Map();
+const searchCache = new Map();
+
+function isRecoverableFsError(error) {
+    return ['ENOENT', 'EACCES', 'EPERM'].includes(error.code);
+}
+
+async function safeReaddir(directory) {
+    try {
+        return await fsPromises.readdir(directory, { withFileTypes: true });
+    } catch (error) {
+        if (isRecoverableFsError(error)) {
+            console.warn(`跳过无法访问的目录 ${directory}:`, error.message);
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function safeStat(targetPath) {
+    try {
+        return await fsPromises.stat(targetPath);
+    } catch (error) {
+        if (isRecoverableFsError(error)) {
+            console.warn(`跳过无法访问的路径 ${targetPath}:`, error.message);
+            return null;
+        }
+        throw error;
+    }
+}
+
+async function getDirectorySignature(dir) {
+    const stat = await safeStat(dir);
+    if (!stat) return null;
+    return `${stat.mtimeMs}-${stat.size}`;
+}
+
+// 递归获取所有 TXT 文件，带深度和数量限制
 async function getAllTxtFiles(dir) {
+    const cachedSignature = await getDirectorySignature(dir);
+    if (cachedSignature && dirScanCache.has(dir)) {
+        const cached = dirScanCache.get(dir);
+        if (cached.signature === cachedSignature) {
+            return cached.files;
+        }
+    }
+
     const files = [];
-    
-    async function scan(directory) {
-        const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-        
+    let totalFilesScanned = 0;
+    let limitReached = false;
+
+    async function scan(directory, depth = 0) {
+        if (depth > MAX_SCAN_DEPTH) {
+            console.warn(`已达到最大递归深度，停止继续扫描：${directory}`);
+            return;
+        }
+
+        if (limitReached) return;
+
+        const entries = await safeReaddir(directory);
+        if (!entries) return;
+
         for (const entry of entries) {
+            if (limitReached) break;
+
             const fullPath = path.join(directory, entry.name);
-            
+
+            if (entry.isSymbolicLink()) {
+                console.warn(`跳过符号链接：${fullPath}`);
+                continue;
+            }
+
             if (entry.isDirectory()) {
-                await scan(fullPath);
-            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
-                files.push(fullPath);
+                await scan(fullPath, depth + 1);
+            } else if (entry.isFile()) {
+                totalFilesScanned += 1;
+                if (totalFilesScanned > MAX_FILE_COUNT) {
+                    console.warn('已达到最大文件扫描数量，提前结束');
+                    limitReached = true;
+                    break;
+                }
+
+                if (entry.name.toLowerCase().endsWith('.txt')) {
+                    files.push(fullPath);
+                }
             }
         }
     }
-    
+
     await scan(dir);
+
+    if (cachedSignature) {
+        dirScanCache.set(dir, { signature: cachedSignature, files });
+    }
+
     return files;
+}
+
+async function searchFileWithCache(baseDir, fileName) {
+    const cacheKey = `${baseDir}::${fileName.toLowerCase()}`;
+    const signature = await getDirectorySignature(baseDir);
+
+    if (signature && searchCache.has(cacheKey)) {
+        const cached = searchCache.get(cacheKey);
+        if (cached.signature === signature) {
+            return cached.result;
+        }
+    }
+
+    let foundPath = null;
+    let totalFilesScanned = 0;
+    let limitReached = false;
+
+    async function searchInDir(dir, depth = 0) {
+        if (depth > MAX_SCAN_DEPTH) {
+            console.warn(`已达到最大递归深度，停止搜索：${dir}`);
+            return;
+        }
+
+        if (limitReached || foundPath) return;
+
+        const entries = await safeReaddir(dir);
+        if (!entries) return;
+
+        for (const entry of entries) {
+            if (limitReached || foundPath) break;
+
+            const fullPath = path.join(dir, entry.name);
+
+            if (entry.isSymbolicLink()) {
+                console.warn(`跳过符号链接：${fullPath}`);
+                continue;
+            }
+
+            if (entry.isDirectory()) {
+                await searchInDir(fullPath, depth + 1);
+            } else if (entry.isFile()) {
+                totalFilesScanned += 1;
+                if (totalFilesScanned > MAX_FILE_COUNT) {
+                    console.warn('搜索达到最大文件数量限制，提前结束');
+                    limitReached = true;
+                    break;
+                }
+
+                if (entry.name.toLowerCase() === fileName.toLowerCase()) {
+                    foundPath = fullPath;
+                    break;
+                }
+            }
+        }
+    }
+
+    await searchInDir(baseDir);
+
+    if (signature) {
+        searchCache.set(cacheKey, { signature, result: foundPath });
+    }
+
+    return foundPath;
 }
 
 // 添加保存配置的处理函数
@@ -401,29 +518,5 @@ ipcMain.handle('find-and-open-file-location', async (event, searchPaths, fileNam
 
 // 在目录中查找文件的辅助函数
 async function findFileInDirectory(dir, fileName) {
-    async function searchInDir(directory) {
-        try {
-            const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                const fullPath = path.join(directory, entry.name);
-                if (entry.isDirectory()) {
-                    try {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } catch (error) {
-                        console.error(`搜索子目录 ${fullPath} 时出错:`, error);
-                        continue;
-                    }
-                } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                    return fullPath;
-                }
-            }
-        } catch (error) {
-            console.error(`读取目录 ${directory} 时出错:`, error);
-        }
-        return null;
-    }
-    
-    return await searchInDir(dir);
+    return await searchFileWithCache(dir, fileName);
 }
