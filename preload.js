@@ -17,7 +17,11 @@ const api = {
     selectDirectory: () => ipcRenderer.invoke('select-directory'),
 
     // 查找文件位置
-    findAndOpenFileLocation: (searchPaths, fileName) => ipcRenderer.invoke('find-and-open-file-location', searchPaths, fileName)
+    findAndOpenFileLocation: (searchPaths, fileName) => ipcRenderer.invoke('find-and-open-file-location', searchPaths, fileName),
+
+    // 用户状态
+    loadUserState: () => ipcRenderer.invoke('load-user-state'),
+    saveUserState: (state) => ipcRenderer.invoke('save-user-state', state)
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

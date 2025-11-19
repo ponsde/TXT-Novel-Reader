@@ -15,7 +15,9 @@
             getRandomFile: async () => null,
             resetRandomState: async () => null,
             selectDirectory: async () => null,
-            findAndOpenFileLocation: async () => ({ success: false })
+            findAndOpenFileLocation: async () => ({ success: false }),
+            loadUserState: async () => ({}),
+            saveUserState: async () => null
         };
 
         if (!window.electronAPI) {
@@ -165,6 +167,121 @@
         let baseDir = 'E:\\18\\utf'; // 随机阅读的路径
         let searchDirs = []; // 历史记录搜索路径列表
         let wordsPerPage = 4000;
+        const defaultReaderSettings = {
+            fontSize: 18,
+            homePageFontSize: 16,
+            fontFamily: "'Microsoft YaHei', 'PingFang SC', sans-serif",
+            lineHeight: '1.8',
+            letterSpacing: '0',
+            paragraphSpacing: '0.8',
+            pageTurnMode: 'page',
+            theme: 'light'
+        };
+        let userState = {
+            readerSettings: { ...defaultReaderSettings },
+            allBookProgress: {},
+            readingHistory: [],
+            pendingRestore: null,
+            theme: defaultReaderSettings.theme
+        };
+        let userStateLoaded = false;
+        const persistUserState = debounce(() => {
+            if (electronAPI.saveUserState) {
+                electronAPI.saveUserState(userState);
+            }
+        }, 500);
+
+        function debounce(fn, delay) {
+            let timer = null;
+            return function(...args) {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(() => fn.apply(this, args), delay);
+            };
+        }
+
+        function getReaderSettings() {
+            return userState.readerSettings || { ...defaultReaderSettings };
+        }
+
+        function updateReaderSettings(settings) {
+            userState.readerSettings = {
+                ...defaultReaderSettings,
+                ...(userState.readerSettings || {}),
+                ...settings
+            };
+            persistUserState();
+        }
+
+        function getAllBookProgress() {
+            return userState.allBookProgress || {};
+        }
+
+        function setAllBookProgress(progress) {
+            userState.allBookProgress = progress;
+            persistUserState();
+        }
+
+        function getReadingHistory() {
+            return userState.readingHistory || [];
+        }
+
+        function setReadingHistory(history) {
+            userState.readingHistory = history;
+            persistUserState();
+        }
+
+        async function migrateLegacyState() {
+            const legacySettings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+            const legacyHistory = JSON.parse(localStorage.getItem('readingHistory') || '[]');
+            const legacyProgress = JSON.parse(localStorage.getItem('allBookProgress') || '{}');
+            const hasLegacy = Object.keys(legacySettings).length || legacyHistory.length || Object.keys(legacyProgress).length;
+
+            if (hasLegacy) {
+                updateReaderSettings(legacySettings);
+                setReadingHistory(legacyHistory);
+                setAllBookProgress(legacyProgress);
+                localStorage.removeItem('readerSettings');
+                localStorage.removeItem('readingHistory');
+                localStorage.removeItem('allBookProgress');
+                alert('检测到旧版的本地存储数据，已自动导入到新的用户状态文件。');
+            }
+        }
+
+        async function loadUserState() {
+            try {
+                const loadedState = await electronAPI.loadUserState();
+                userState = {
+                    readerSettings: {
+                        ...defaultReaderSettings,
+                        ...((loadedState && loadedState.readerSettings) || {})
+                    },
+                    allBookProgress: (loadedState && loadedState.allBookProgress) || {},
+                    readingHistory: (loadedState && loadedState.readingHistory) || [],
+                    pendingRestore: loadedState && loadedState.pendingRestore ? loadedState.pendingRestore : null,
+                    theme: loadedState && loadedState.theme ? loadedState.theme : defaultReaderSettings.theme
+                };
+                userStateLoaded = true;
+                await migrateLegacyState();
+                applyStoredSettings();
+            } catch (error) {
+                console.error('加载用户状态失败:', error);
+                userState = {
+                    readerSettings: { ...defaultReaderSettings },
+                    allBookProgress: {},
+                    readingHistory: [],
+                    pendingRestore: null
+                };
+            }
+        }
+
+        function getUserTheme() {
+            return (userState && userState.theme) || defaultReaderSettings.theme;
+        }
+
+        function setUserTheme(theme) {
+            userState.theme = theme;
+            updateReaderSettings({ theme });
+        }
 
         document.getElementById('file-input').addEventListener('change', function(e) {
             const file = e.target.files[0];
@@ -237,7 +354,7 @@
                 showNotification(`检测到文件编码: ${encoding}`);
                 
                 // 检查是否有保存的进度，从多书籍进度存储中获取
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                const allBookProgress = getAllBookProgress();
                 if (allBookProgress[currentFileName]) {
                     currentPage = allBookProgress[currentFileName].page;
                     currentChapter = allBookProgress[currentFileName].chapter;
@@ -323,7 +440,7 @@
                     const totalPages = currentContent.length;
                     
                     // 检查是否有保存的进度
-                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                    const allBookProgress = getAllBookProgress();
                     if (allBookProgress[currentFileName]) {
                         // 恢复保存的页码
                         currentPage = allBookProgress[currentFileName].page || 0;
@@ -348,7 +465,7 @@
                     document.querySelector('.progress-indicator').style.display = 'block';
                     
                     // 检查是否有保存的进度，从多书籍进度存储中获取
-                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                    const allBookProgress = getAllBookProgress();
                     if (allBookProgress[currentFileName]) {
                         showPage(allBookProgress[currentFileName].page || 0, allBookProgress[currentFileName].chapter || 0);
                     } else {
@@ -722,7 +839,7 @@
                     content.innerHTML = htmlContent || '<p>此页内容为空</p>';
                     
                     // 应用段落间距设置
-                    const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+                    const settings = getReaderSettings();
                     if (settings.paragraphSpacing) {
                         const paragraphs = document.querySelectorAll('#content p');
                         paragraphs.forEach(p => {
@@ -778,7 +895,7 @@
                     .join('');
                 
                 // 应用段落间距设置
-                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+                const settings = getReaderSettings();
                 if (settings.paragraphSpacing) {
                     const paragraphs = document.querySelectorAll('#content p');
                     paragraphs.forEach(p => {
@@ -879,9 +996,11 @@
 
         function toggleTheme() {
             document.body.classList.toggle('dark-mode');
+            const theme = document.body.classList.contains('dark-mode') ? 'dark' : 'light';
+            setUserTheme(theme);
             // 保存主题设置到配置文件
             electronAPI.saveConfig({
-                theme: document.body.classList.contains('dark-mode') ? 'dark' : 'light'
+                theme
             });
         }
 
@@ -893,33 +1012,27 @@
         function changeFontFamily() {
             const fontFamily = document.getElementById('font-family-selector').value;
             document.getElementById('content').style.fontFamily = fontFamily;
-            
-            // 保存到localStorage
-            const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-            settings.fontFamily = fontFamily;
-            localStorage.setItem('readerSettings', JSON.stringify(settings));
+
+            // 保存到用户状态
+            updateReaderSettings({ fontFamily });
         }
         
         function changeLineHeight() {
             const lineHeight = document.getElementById('line-height-slider').value;
             document.getElementById('line-height-value').textContent = lineHeight;
             document.getElementById('content').style.lineHeight = lineHeight;
-            
-            // 保存到localStorage
-            const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-            settings.lineHeight = lineHeight;
-            localStorage.setItem('readerSettings', JSON.stringify(settings));
+
+            // 保存到用户状态
+            updateReaderSettings({ lineHeight });
         }
         
         function changeLetterSpacing() {
             const letterSpacing = document.getElementById('letter-spacing-slider').value;
             document.getElementById('letter-spacing-value').textContent = letterSpacing;
             document.getElementById('content').style.letterSpacing = `${letterSpacing}em`;
-            
-            // 保存到localStorage
-            const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-            settings.letterSpacing = letterSpacing;
-            localStorage.setItem('readerSettings', JSON.stringify(settings));
+
+            // 保存到用户状态
+            updateReaderSettings({ letterSpacing });
         }
         
         function changeParagraphSpacing() {
@@ -931,15 +1044,13 @@
             paragraphs.forEach(p => {
                 p.style.marginBottom = `${paragraphSpacing}em`;
             });
-            
-            // 保存到localStorage
-            const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-            settings.paragraphSpacing = paragraphSpacing;
-            localStorage.setItem('readerSettings', JSON.stringify(settings));
+
+            // 保存到用户状态
+            updateReaderSettings({ paragraphSpacing });
         }
-        
+
         function applyStoredSettings() {
-            const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+            const settings = getReaderSettings();
             
             if (settings.fontFamily) {
                 document.getElementById('font-family-selector').value = settings.fontFamily;
@@ -963,6 +1074,13 @@
                 document.getElementById('paragraph-spacing-value').textContent = `${settings.paragraphSpacing}em`;
             }
             
+            // 应用主题
+            if (getUserTheme() === 'dark') {
+                document.body.classList.add('dark-mode');
+            } else {
+                document.body.classList.remove('dark-mode');
+            }
+
             // 分别应用阅读内容和主页字体大小
             if (settings.fontSize) {
                 fontSize = parseInt(settings.fontSize);
@@ -1005,10 +1123,7 @@
                 
                 document.getElementById('content').style.fontSize = `${fontSize}px`;
                 
-                // 保存到localStorage
-                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-                settings.fontSize = fontSize;
-                localStorage.setItem('readerSettings', JSON.stringify(settings));
+                updateReaderSettings({ fontSize });
             } else {
                 // 主页模式下，调整主页字体大小
                 homePageFontSize += delta * 2;
@@ -1017,10 +1132,7 @@
                 
                 applyHomePageFontSize();
                 
-                // 保存到localStorage
-                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-                settings.homePageFontSize = homePageFontSize;
-                localStorage.setItem('readerSettings', JSON.stringify(settings));
+                updateReaderSettings({ homePageFontSize });
             }
         }
         
@@ -1030,19 +1142,13 @@
                 fontSize = size;
                 document.getElementById('content').style.fontSize = `${fontSize}px`;
                 
-                // 保存到localStorage
-                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-                settings.fontSize = fontSize;
-                localStorage.setItem('readerSettings', JSON.stringify(settings));
+                updateReaderSettings({ fontSize });
             } else {
                 // 主页模式下设置字体大小
                 homePageFontSize = size;
                 applyHomePageFontSize();
                 
-                // 保存到localStorage
-                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-                settings.homePageFontSize = homePageFontSize;
-                localStorage.setItem('readerSettings', JSON.stringify(settings));
+                updateReaderSettings({ homePageFontSize });
             }
         }
 
@@ -1090,7 +1196,8 @@
                 position: lastPosition,
                 chapter: lastChapter
             };
-            localStorage.setItem('pendingRestore', JSON.stringify(pendingRestore));
+            userState.pendingRestore = pendingRestore;
+            persistUserState();
             
             // 保存这些值到全局变量，以便在 searchFile 的回调中使用
             window.pendingPosition = lastPosition;
@@ -1142,7 +1249,7 @@
                     currentFileName = fileName;
                     
                     // 检查保存的进度
-                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                    const allBookProgress = getAllBookProgress();
                     const hasProgress = allBookProgress[fileName] !== undefined;
                     
                     // 优先使用传入的位置信息
@@ -1191,7 +1298,7 @@
 
         // 修改添加历史记录的函数，保存更多信息以便计算进度
         function addToHistory(record) {
-            let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+            let history = getReadingHistory();
             
             // 添加时间戳
             record.timestamp = new Date().getTime();
@@ -1221,7 +1328,7 @@
                 history.pop();
             }
             
-            localStorage.setItem('readingHistory', JSON.stringify(history));
+            setReadingHistory(history);
             
             // 如果当前在主页，则更新历史记录显示
             if (!currentFileName) {
@@ -1229,21 +1336,24 @@
             }
             
             // 也更新阅读进度存储
-            let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-            allBookProgress[record.fileName] = {
-                page: record.lastPosition,
-                chapter: record.chapter || 0,
-                lastRead: new Date().toISOString(),
-                hasChapters: chapters.length > 0,
-                totalChapters: chapters.length > 0 ? chapters.length : 0,
-                totalPages: chapters.length === 0 && currentContent ? Math.ceil(currentContent.length / wordsPerPage) : 0
+            let allBookProgress = getAllBookProgress();
+            allBookProgress = {
+                ...allBookProgress,
+                [record.fileName]: {
+                    page: record.lastPosition,
+                    chapter: record.chapter || 0,
+                    lastRead: new Date().toISOString(),
+                    hasChapters: chapters.length > 0,
+                    totalChapters: chapters.length > 0 ? chapters.length : 0,
+                    totalPages: chapters.length === 0 && currentContent ? Math.ceil(currentContent.length / wordsPerPage) : 0
+                }
             };
-            localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+            setAllBookProgress(allBookProgress);
         }
 
         // 修改历史记录显示
         function updateHistoryDisplay() {
-            const history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+            const history = getReadingHistory();
             const content = document.getElementById('content');
             
             // 如果当前没有打开的文件，显示历史记录
@@ -1260,9 +1370,9 @@
                     historyHtml += '<p class="no-history">暂无阅读记录</p>';
                 } else {
                     historyHtml += '<div class="history-items">';
+                    const allBookProgress = getAllBookProgress();
                     history.forEach(record => {
                         // 获取该书籍的最新进度信息
-                        const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                         const bookProgress = allBookProgress[record.fileName] || {};
                         const lastReadDate = bookProgress.lastRead ? new Date(bookProgress.lastRead).toLocaleString() : record.date;
                         
@@ -1317,15 +1427,15 @@
 
         // 添加删除单个历史记录的函数
         function deleteHistoryRecord(fileName) {
-            let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+            let history = getReadingHistory();
             history = history.filter(record => record.fileName !== fileName);
-            localStorage.setItem('readingHistory', JSON.stringify(history));
-            
+            setReadingHistory(history);
+
             // 同时清除阅读进度
-            let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+            let allBookProgress = getAllBookProgress();
             if (allBookProgress[fileName]) {
                 delete allBookProgress[fileName];
-                localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+                setAllBookProgress(allBookProgress);
             }
             
             // 更新显示
@@ -1781,10 +1891,10 @@
         // 添加清空历史记录的函数
         function clearHistory() {
             if (confirm('确定要清空所有阅读历史吗？')) {
-                localStorage.removeItem('readingHistory');
-                
+                setReadingHistory([]);
+
                 // 清空所有书籍的阅读进度
-                localStorage.removeItem('allBookProgress');
+                setAllBookProgress({});
                 
                 // 更新界面
                 updateHistoryDisplay();
@@ -1794,10 +1904,10 @@
 
         // 在页面加载时显示历史记录并加载配置
         document.addEventListener('DOMContentLoaded', async function() {
+            // 先加载用户状态
+            await loadUserState();
             // 先加载配置
             await loadConfig();
-            // 应用存储的字体设置
-            applyStoredSettings();
             // 然后更新历史记录显示
             updateHistoryDisplay();
             
@@ -1845,6 +1955,12 @@
             }
         });
 
+        window.addEventListener('beforeunload', () => {
+            if (electronAPI.saveUserState) {
+                electronAPI.saveUserState(userState);
+            }
+        });
+
         // 修改加载配置的函数
         async function loadConfig() {
             try {
@@ -1862,9 +1978,13 @@
                 fontSize = config.fontSize || 18;
                 homePageFontSize = config.homePageFontSize || 16;
                 
-                // 应用主题设置
-                if (config.theme === 'dark') {
+                // 应用主题设置，优先使用用户状态
+                const themeToApply = getUserTheme() || config.theme;
+                setUserTheme(themeToApply === 'dark' ? 'dark' : 'light');
+                if (themeToApply === 'dark') {
                     document.body.classList.add('dark-mode');
+                } else {
+                    document.body.classList.remove('dark-mode');
                 }
                 
                 // 根据当前模式应用字体大小
@@ -1891,20 +2011,23 @@
         // 修改保存进度的函数，确保保存章节信息，支持多本书
         function saveProgress() {
             if (!currentFileName) return; // 如果没有打开文件，不保存
-            
+
             // 获取所有书籍的进度记录
-            let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-            
+            let allBookProgress = getAllBookProgress();
+
             // 更新当前书籍的进度
-            allBookProgress[currentFileName] = {
-                page: currentPage,
-                chapter: chapters.length > 0 ? currentChapter : 0,  // 如果没有章节，章节号始终为0
-                lastRead: new Date().toISOString(),
-                hasChapters: chapters.length > 0  // 记录是否有章节
+            allBookProgress = {
+                ...allBookProgress,
+                [currentFileName]: {
+                    page: currentPage,
+                    chapter: chapters.length > 0 ? currentChapter : 0,  // 如果没有章节，章节号始终为0
+                    lastRead: new Date().toISOString(),
+                    hasChapters: chapters.length > 0  // 记录是否有章节
+                }
             };
-            
+
             // 保存所有书籍的进度
-            localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+            setAllBookProgress(allBookProgress);
             
             // 更新历史记录
             addToHistory({
@@ -1955,7 +2078,7 @@
                 document.getElementById('book-title').textContent = currentFileName.replace('.txt', '');
                 
                 // 检查是否有保存的进度，从多书籍进度存储中获取
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                const allBookProgress = getAllBookProgress();
                 if (allBookProgress[currentFileName]) {
                     currentPage = allBookProgress[currentFileName].page;
                     currentChapter = allBookProgress[currentFileName].chapter;
