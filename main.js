@@ -7,12 +7,54 @@ const fsPromises = fs.promises;
 let randomizedBooks = [];
 let allAvailableBooks = [];
 const RANDOM_STATE_FILE = 'random_state.json';
+const CONFIG_FILE = 'config.json';
+
+async function ensureUserDataDir() {
+    const userDataPath = app.getPath('userData');
+    await fsPromises.mkdir(userDataPath, { recursive: true });
+    return userDataPath;
+}
+
+async function getDataFilePath(fileName) {
+    const userDataPath = await ensureUserDataDir();
+    return path.join(userDataPath, fileName);
+}
+
+async function moveFileWithFallback(source, target) {
+    try {
+        await fsPromises.rename(source, target);
+    } catch (error) {
+        try {
+            await fsPromises.copyFile(source, target);
+        } catch (copyError) {
+            throw copyError;
+        }
+    }
+}
+
+async function migrateDataFile(fileName) {
+    const legacyPath = path.join(path.dirname(app.getPath('exe')), fileName);
+    const newPath = await getDataFilePath(fileName);
+
+    if (fs.existsSync(legacyPath) && !fs.existsSync(newPath)) {
+        try {
+            await moveFileWithFallback(legacyPath, newPath);
+            console.log(`已迁移 ${fileName} 至用户数据目录`);
+        } catch (error) {
+            console.error(`迁移 ${fileName} 失败:`, error);
+        }
+    }
+}
+
+async function migrateDataFiles() {
+    await migrateDataFile(RANDOM_STATE_FILE);
+    await migrateDataFile(CONFIG_FILE);
+}
 
 // 加载随机状态
 async function loadRandomState() {
     try {
-        const exePath = app.getPath('exe');
-        const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
+        const stateFilePath = await getDataFilePath(RANDOM_STATE_FILE);
         
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
@@ -32,8 +74,7 @@ async function loadRandomState() {
 // 保存随机状态
 async function saveRandomState() {
     try {
-        const exePath = app.getPath('exe');
-        const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
+        const stateFilePath = await getDataFilePath(RANDOM_STATE_FILE);
         
         const state = {
             randomizedBooks,
@@ -73,6 +114,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+    await migrateDataFiles();
     // 加载随机状态
     await loadRandomState();
     createWindow();
@@ -159,9 +201,7 @@ ipcMain.handle('search-file', async (event, baseDir, fileName) => {
 // 添加配置文件处理
 ipcMain.handle('load-config', async () => {
     try {
-        // 使用 app.getPath('exe') 获取程序所在目录
-        const exePath = app.getPath('exe');
-        const configPath = path.join(path.dirname(exePath), 'config.json');
+        const configPath = await getDataFilePath(CONFIG_FILE);
         
         // 如果配置文件不存在，创建默认配置
         if (!fs.existsSync(configPath)) {
@@ -302,8 +342,7 @@ async function getAllTxtFiles(dir) {
 // 添加保存配置的处理函数
 ipcMain.handle('save-config', async (event, newSettings) => {
     try {
-        const exePath = app.getPath('exe');
-        const configPath = path.join(path.dirname(exePath), 'config.json');
+        const configPath = await getDataFilePath(CONFIG_FILE);
         
         // 读取现有配置
         let config = {};
