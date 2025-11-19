@@ -8,6 +8,30 @@ let randomizedBooks = [];
 let allAvailableBooks = [];
 const RANDOM_STATE_FILE = 'random_state.json';
 const CONFIG_FILE = 'config.json';
+const USER_STATE_FILE = 'user_state.json';
+const USER_STATE_SAVE_DELAY = 500;
+
+function getDefaultUserState() {
+    return {
+        theme: 'light',
+        readerSettings: {
+            fontSize: 18,
+            homePageFontSize: 16,
+            fontFamily: "'Microsoft YaHei', 'PingFang SC', sans-serif",
+            lineHeight: '1.8',
+            letterSpacing: '0',
+            paragraphSpacing: '0.8',
+            pageTurnMode: 'page'
+        },
+        allBookProgress: {},
+        readingHistory: [],
+        pendingRestore: null
+    };
+}
+
+let pendingUserState = null;
+let userStateSaveTimer = null;
+let userStateWriting = false;
 
 async function ensureUserDataDir() {
     const userDataPath = app.getPath('userData');
@@ -49,6 +73,71 @@ async function migrateDataFile(fileName) {
 async function migrateDataFiles() {
     await migrateDataFile(RANDOM_STATE_FILE);
     await migrateDataFile(CONFIG_FILE);
+}
+
+async function readUserState() {
+    try {
+        const stateFilePath = await getDataFilePath(USER_STATE_FILE);
+        if (!fs.existsSync(stateFilePath)) {
+            return getDefaultUserState();
+        }
+
+        const data = await fsPromises.readFile(stateFilePath, 'utf8');
+        const parsed = JSON.parse(data);
+        return {
+            ...getDefaultUserState(),
+            ...parsed,
+            readerSettings: {
+                ...getDefaultUserState().readerSettings,
+                ...(parsed.readerSettings || {})
+            },
+            allBookProgress: parsed.allBookProgress || {},
+            readingHistory: parsed.readingHistory || [],
+            pendingRestore: parsed.pendingRestore || null
+        };
+    } catch (error) {
+        console.error('读取用户状态失败，使用默认值:', error);
+        return getDefaultUserState();
+    }
+}
+
+async function writeUserState(state) {
+    const stateFilePath = await getDataFilePath(USER_STATE_FILE);
+
+    if (userStateWriting) {
+        pendingUserState = state;
+        return;
+    }
+
+    userStateWriting = true;
+    try {
+        await fsPromises.writeFile(stateFilePath, JSON.stringify(state, null, 4));
+    } catch (error) {
+        console.error('保存用户状态失败:', error);
+    } finally {
+        userStateWriting = false;
+
+        if (pendingUserState) {
+            const nextState = pendingUserState;
+            pendingUserState = null;
+            await writeUserState(nextState);
+        }
+    }
+}
+
+function scheduleUserStateSave(state) {
+    pendingUserState = state;
+
+    if (userStateSaveTimer) {
+        clearTimeout(userStateSaveTimer);
+    }
+
+    userStateSaveTimer = setTimeout(() => {
+        if (pendingUserState) {
+            writeUserState(pendingUserState);
+            pendingUserState = null;
+        }
+    }, USER_STATE_SAVE_DELAY);
 }
 
 // 加载随机状态
@@ -126,6 +215,14 @@ app.on('window-all-closed', () => {
     }
 });
 
+app.on('before-quit', async () => {
+    if (pendingUserState) {
+        const stateToSave = pendingUserState;
+        pendingUserState = null;
+        await writeUserState(stateToSave);
+    }
+});
+
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();
@@ -148,6 +245,16 @@ ipcMain.handle('reset-random-state', async () => {
         console.error('重置随机状态失败:', error);
         return false;
     }
+});
+
+// 用户状态持久化
+ipcMain.handle('load-user-state', async () => {
+    return await readUserState();
+});
+
+ipcMain.handle('save-user-state', async (event, state) => {
+    scheduleUserStateSave(state || getDefaultUserState());
+    return true;
 });
 
 // 处理读取文件请求
