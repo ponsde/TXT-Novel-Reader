@@ -1230,11 +1230,10 @@
                         // 如果在当前目录没找到，尝试下一个目录
                         if (remainingDirs.length > 0) {
                             document.querySelector('.loading-message').textContent = `在 ${currentDir} 中未找到，继续搜索...`;
-                            searchFile(remainingDirs, fileName);
+                            return searchFile(remainingDirs, fileName);
                         } else {
                             throw new Error(`找不到文件: ${fileName}`);
                         }
-                        return null;
                     }
                 })
                 .then(data => {
@@ -1270,11 +1269,14 @@
                     }
                     
                     document.getElementById('book-title').textContent = fileName.replace('.txt', '');
-                    
+
                     // 检测章节结构
                     document.querySelector('.loading-message').textContent = '正在分析章节结构...';
                     detectChapters(text);
-                    
+
+                    // 完成加载后关闭加载遮罩
+                    document.getElementById('loading-overlay').style.display = 'none';
+
                     // 清理临时变量
                     window.pendingPosition = undefined;
                     window.pendingChapter = undefined;
