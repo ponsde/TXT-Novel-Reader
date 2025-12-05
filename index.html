@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,14 +15,49 @@
             ipcRenderer = electron.ipcRenderer;
             console.log('Electron 成功加载');
         } catch (error) {
-            console.error('Electron 加载失败:', error);
-            // 提供一个模拟对象以避免错误
+            console.log('Electron 加载失败，切换到 Web 模式');
+            // Web 模式下的 ipcRenderer 模拟
             ipcRenderer = {
-                invoke: () => Promise.resolve(null)
+                invoke: async (channel, ...args) => {
+                    console.log(`[Web API] 调用: ${channel}`, args);
+                    try {
+                        const response = await fetch('/api/invoke', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ channel, args })
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+
+                        const result = await response.json();
+                        if (result.error) {
+                            throw new Error(result.error);
+                        }
+
+                        // 特殊处理 Buffer 数据
+                        if (result.data && result.data.type === 'Buffer' && Array.isArray(result.data.data)) {
+                            return Uint8Array.from(result.data.data);
+                        }
+
+                        return result.data;
+                    } catch (e) {
+                        console.error(`[Web API] 调用失败: ${channel}`, e);
+                        if (channel === 'select-directory') {
+                            alert('Web 模式下不支持选择目录，请手动在 config.json 中配置或将小说放入 books 目录');
+                            return null;
+                        }
+                        throw e;
+                    }
+                },
+                on: () => { },
+                removeListener: () => { }
             };
         }
     </script>
 </head>
+
 <body>
     <div class="loading-overlay" id="loading-overlay" style="display: none;">
         <div class="loading-content">
@@ -34,7 +70,7 @@
         <div class="reader-header">
             <h1 id="book-title">优雅阅读器</h1>
         </div>
-        
+
         <div class="reader-main">
             <div class="reader-content" id="content">
                 <p>请选择一个 TXT 文件开始阅读</p>
@@ -42,7 +78,7 @@
                 <p style="color: #666; font-size: 14px;">支持多种编码格式：UTF-8、GBK、Big5、Shift-JIS、EUC-KR、UTF-16等</p>
                 <p style="color: #666; font-size: 14px;">提示：在主页和阅读页面可以分别调整字体大小</p>
             </div>
-            
+
             <div class="reader-sidebar">
                 <div class="setting-item">
                     <label for="file-input" class="setting-item">
@@ -54,6 +90,10 @@
                 <div class="setting-item" id="random-book-btn">
                     <i class="icon">🎲</i>
                     <span>随机</span>
+                </div>
+                <div class="setting-item" id="library-btn" onclick="showServerLibrary()">
+                    <i class="icon">📚</i>
+                    <span>书库</span>
                 </div>
                 <div class="setting-item" onclick="toggleChapterList()">
                     <i class="icon">≡</i>
@@ -137,17 +177,20 @@
             </div>
             <div class="setting-group">
                 <label>行高：</label>
-                <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.1" value="1.8" onchange="changeLineHeight()">
+                <input type="range" id="line-height-slider" min="1.2" max="2.5" step="0.1" value="1.8"
+                    onchange="changeLineHeight()">
                 <span id="line-height-value">1.8</span>
             </div>
             <div class="setting-group">
                 <label>字间距：</label>
-                <input type="range" id="letter-spacing-slider" min="0" max="0.15" step="0.01" value="0" onchange="changeLetterSpacing()">
+                <input type="range" id="letter-spacing-slider" min="0" max="0.15" step="0.01" value="0"
+                    onchange="changeLetterSpacing()">
                 <span id="letter-spacing-value">0</span>
             </div>
             <div class="setting-group">
                 <label>段落间距：</label>
-                <input type="range" id="paragraph-spacing-slider" min="0.6" max="2" step="0.1" value="0.8" onchange="changeParagraphSpacing()">
+                <input type="range" id="paragraph-spacing-slider" min="0.6" max="2" step="0.1" value="0.8"
+                    onchange="changeParagraphSpacing()">
                 <span id="paragraph-spacing-value">0.8em</span>
             </div>
         </div>
@@ -165,14 +208,14 @@
         let searchDirs = []; // 历史记录搜索路径列表
         let wordsPerPage = 4000;
 
-        document.getElementById('file-input').addEventListener('change', function(e) {
+        document.getElementById('file-input').addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (!file) return;
-            
+
             currentFileName = file.name;
             document.getElementById('loading-overlay').style.display = 'flex';
             document.querySelector('.loading-message').textContent = '准备加载文件...';
-            
+
             // 使用分块读取方式处理大文件
             const CHUNK_SIZE = 1024 * 1024 * 4; // 4MB 分块大小
             let fileSize = file.size;
@@ -180,19 +223,19 @@
             let fileReader = new FileReader();
             let chunks = [];
             let loadedSize = 0;
-            
+
             // 创建一个 Web Worker 来处理文件解码，避免阻塞主线程
             const fileWorker = createFileWorker();
-            
-            fileReader.onload = function(e) {
+
+            fileReader.onload = function (e) {
                 if (e.target.result) {
                     chunks.push(e.target.result);
                     loadedSize += e.target.result.byteLength;
-                    
+
                     // 更新加载进度
                     const progress = Math.round((loadedSize / fileSize) * 100);
                     document.querySelector('.loading-message').textContent = `加载中...${progress}%`;
-                    
+
                     // 继续读取下一块
                     offset += CHUNK_SIZE;
                     if (offset < fileSize) {
@@ -200,10 +243,10 @@
                     } else {
                         // 所有块都已读取完成，开始处理文件内容
                         document.querySelector('.loading-message').textContent = '正在处理文件内容...';
-                        
+
                         // 合并所有块
                         const completeBuffer = mergeArrayBuffers(chunks);
-                        
+
                         // 使用 Worker 处理文件解码
                         fileWorker.postMessage({
                             buffer: completeBuffer,
@@ -212,15 +255,15 @@
                     }
                 }
             };
-            
-            fileReader.onerror = function(e) {
+
+            fileReader.onerror = function (e) {
                 console.error("文件读取错误:", e);
                 alert("文件读取失败，请检查文件格式和编码。");
                 document.getElementById('loading-overlay').style.display = 'none';
             };
-            
+
             // 处理 Worker 返回的结果
-            fileWorker.onmessage = function(e) {
+            fileWorker.onmessage = function (e) {
                 const result = e.data;
                 if (result.error) {
                     console.error("文件处理错误:", result.error);
@@ -228,13 +271,13 @@
                     document.getElementById('loading-overlay').style.display = 'none';
                     return;
                 }
-                
+
                 const text = result.text;
                 const encoding = result.encoding || '未知';
-                
+
                 // 显示检测到的编码
                 showNotification(`检测到文件编码: ${encoding}`);
-                
+
                 // 检查是否有保存的进度，从多书籍进度存储中获取
                 const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                 if (allBookProgress[currentFileName]) {
@@ -247,10 +290,10 @@
 
                 document.getElementById('book-title').textContent = file.name.replace('.txt', '');
                 document.querySelector('.loading-message').textContent = '正在分析章节结构...';
-                
+
                 // 确保内容区域可见
                 document.getElementById('content').style.display = 'block';
-                
+
                 // 检测章节
                 detectChapters(text);
 
@@ -262,13 +305,13 @@
                     chapter: currentChapter
                 });
             };
-            
+
             // 开始读取第一块
             function readNextChunk() {
                 let slice = file.slice(offset, offset + CHUNK_SIZE);
                 fileReader.readAsArrayBuffer(slice);
             }
-            
+
             // 合并 ArrayBuffer 数组
             function mergeArrayBuffers(buffers) {
                 let totalLength = buffers.reduce((acc, buffer) => acc + buffer.byteLength, 0);
@@ -280,47 +323,47 @@
                 });
                 return result.buffer;
             }
-            
+
             // 开始读取文件
             readNextChunk();
         });
 
         function detectChapters(text) {
             document.querySelector('.loading-message').textContent = '正在分析章节结构...';
-            
+
             // 使用 Web Worker 进行章节检测，避免阻塞主线程
             const chapterWorker = createChapterWorker();
-            
-            chapterWorker.onmessage = function(e) {
+
+            chapterWorker.onmessage = function (e) {
                 const result = e.data;
-                
+
                 if (result.error) {
                     console.error("章节分析错误:", result.error);
                     document.getElementById('loading-overlay').style.display = 'none';
                     return;
                 }
-                
+
                 chapters = result.chapters;
-                
+
                 if (result.noChapters) {
                     // 如果没有检测到章节，存储整个文本内容
                     // 按照固定字数(wordsPerPage)而不是按行拆分文本
                     const contentText = text;
                     currentContent = [];
-                    
+
                     // 每wordsPerPage个字符分页，而不是按行
                     for (let i = 0; i < contentText.length; i += wordsPerPage) {
                         currentContent.push(contentText.slice(i, i + wordsPerPage));
                     }
-                    
+
                     // 确保至少有一页内容
                     if (currentContent.length === 0 && contentText.length > 0) {
                         currentContent.push(contentText);
                     }
-                    
+
                     // 计算总页数
                     const totalPages = currentContent.length;
-                    
+
                     // 检查是否有保存的进度
                     const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                     if (allBookProgress[currentFileName]) {
@@ -333,10 +376,10 @@
                     } else {
                         currentPage = 0;
                     }
-                    
+
                     // 显示内容
                     showTextPage(currentPage, totalPages);
-                    
+
                     // 确保控件可见
                     document.querySelector('.navigation-buttons').style.display = 'flex';
                     document.querySelector('.progress-indicator').style.display = 'block';
@@ -345,7 +388,7 @@
                     // 显示翻页按钮
                     document.querySelector('.navigation-buttons').style.display = 'flex';
                     document.querySelector('.progress-indicator').style.display = 'block';
-                    
+
                     // 检查是否有保存的进度，从多书籍进度存储中获取
                     const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                     if (allBookProgress[currentFileName]) {
@@ -354,27 +397,27 @@
                         jumpToChapter(0);
                     }
                 }
-                
+
                 document.querySelector('.loading-message').textContent = '加载完成';
                 document.getElementById('loading-overlay').style.display = 'none';
-                
+
                 // 保存当前文件的进度
                 saveProgress();
-                
+
                 // 更新进度条
                 updateProgressBar();
-                
+
                 // 应用存储的字体设置
                 applyStoredSettings();
             };
-            
+
             // 发送文本到 Worker 进行处理
             chapterWorker.postMessage({
                 text: text,
                 wordsPerPage: wordsPerPage
             });
         }
-        
+
         // 修改 createFileWorker 函数以支持更多编码格式
         function createFileWorker() {
             const workerCode = `
@@ -569,14 +612,14 @@
                     return suspiciousChars > text.length * threshold;
                 }
             `;
-            
+
             const blob = new Blob([workerCode], { type: 'application/javascript' });
             const url = URL.createObjectURL(blob);
             const worker = new Worker(url);
-            
+
             // 清理 URL 对象
             URL.revokeObjectURL(url);
-            
+
             return worker;
         }
 
@@ -685,14 +728,14 @@
                     }
                 };
             `;
-            
+
             const blob = new Blob([workerCode], { type: 'application/javascript' });
             const url = URL.createObjectURL(blob);
             const worker = new Worker(url);
-            
+
             // 清理 URL 对象
             URL.revokeObjectURL(url);
-            
+
             return worker;
         }
 
@@ -700,25 +743,25 @@
         function showTextPage(pageNum, totalPages) {
             if (pageNum >= 0 && pageNum < totalPages) {
                 currentPage = pageNum;
-                
+
                 const content = document.getElementById('content');
                 // 确保内容区域可见
                 content.style.display = 'block';
-                
+
                 // 获取当前页内容
                 const pageText = currentContent[currentPage];
-                
+
                 // 按行拆分当前页内容并显示
                 if (pageText) {
                     const lines = pageText.split('\n');
                     let htmlContent = '';
                     for (let line of lines) {
-                        htmlContent += line.trim() 
-                            ? `<p>${line}</p>` 
+                        htmlContent += line.trim()
+                            ? `<p>${line}</p>`
                             : '<p><br></p>';
                     }
                     content.innerHTML = htmlContent || '<p>此页内容为空</p>';
-                    
+
                     // 应用段落间距设置
                     const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                     if (settings.paragraphSpacing) {
@@ -732,20 +775,20 @@
                     content.innerHTML = '<p>此页无内容</p>';
                     console.warn('当前页内容为空: pageNum =', pageNum, 'totalPages =', totalPages);
                 }
-                
+
                 // 更新页码显示，确保页码正确
                 document.getElementById('page-info').textContent = `第 ${currentPage + 1}/${totalPages} 页`;
-                
+
                 // 保存进度
                 saveProgress();
-                
+
                 // 滚动到页面顶部
                 window.scrollTo(0, 0);
                 content.scrollTop = 0;
-                
+
                 // 确保翻页按钮可见
                 document.querySelector('.navigation-buttons').style.display = 'flex';
-                
+
                 // 更新进度条
                 updateProgressBar();
             } else {
@@ -761,11 +804,11 @@
 
             const chapterContent = chapters[chapterNum].content;
             const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
-            
+
             if (pageNum >= 0 && pageNum < totalPages) {
                 currentPage = pageNum;
                 currentChapter = chapterNum;
-                
+
                 const start = currentPage * wordsPerPage;
                 const end = start + wordsPerPage;
                 const content = document.getElementById('content');
@@ -774,7 +817,7 @@
                     .split('\n')
                     .map(line => line.trim() ? `<p>${line}</p>` : '<p><br></p>')
                     .join('');
-                
+
                 // 应用段落间距设置
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                 if (settings.paragraphSpacing) {
@@ -783,12 +826,12 @@
                         p.style.marginBottom = `${settings.paragraphSpacing}em`;
                     });
                 }
-                
+
                 document.getElementById('page-info').textContent = `第 ${currentPage + 1}/${totalPages} 页`;
-                
+
                 // 保存进度
                 saveProgress();
-                
+
                 // 滚动到页面顶部
                 window.scrollTo(0, 0);
                 content.scrollTop = 0;
@@ -802,7 +845,7 @@
             if (chapters.length === 0) {
                 // 确保正确计算总页数
                 const totalPages = currentContent.length;
-                
+
                 if (currentPage < totalPages - 1) {
                     showTextPage(currentPage + 1, totalPages);
                 } else {
@@ -813,7 +856,7 @@
                 // 有章节的情况，使用原有逻辑
                 const currentChapterContent = chapters[currentChapter].content;
                 const totalPagesInChapter = Math.ceil(currentChapterContent.length / wordsPerPage);
-                
+
                 if (currentPage < totalPagesInChapter - 1) {
                     showPage(currentPage + 1);
                 } else if (currentChapter < chapters.length - 1) {
@@ -858,9 +901,9 @@
             if (chapterList.classList.contains('hidden')) {
                 updateChapterList();
                 chapterList.classList.remove('hidden');
-                
+
                 // 添加鼠标离开事件监听
-                chapterList.addEventListener('mouseleave', function() {
+                chapterList.addEventListener('mouseleave', function () {
                     chapterList.classList.add('hidden');
                 });
             }
@@ -887,80 +930,80 @@
             const panel = document.getElementById('font-settings-panel');
             panel.classList.toggle('hidden');
         }
-        
+
         function changeFontFamily() {
             const fontFamily = document.getElementById('font-family-selector').value;
             document.getElementById('content').style.fontFamily = fontFamily;
-            
+
             // 保存到localStorage
             const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
             settings.fontFamily = fontFamily;
             localStorage.setItem('readerSettings', JSON.stringify(settings));
         }
-        
+
         function changeLineHeight() {
             const lineHeight = document.getElementById('line-height-slider').value;
             document.getElementById('line-height-value').textContent = lineHeight;
             document.getElementById('content').style.lineHeight = lineHeight;
-            
+
             // 保存到localStorage
             const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
             settings.lineHeight = lineHeight;
             localStorage.setItem('readerSettings', JSON.stringify(settings));
         }
-        
+
         function changeLetterSpacing() {
             const letterSpacing = document.getElementById('letter-spacing-slider').value;
             document.getElementById('letter-spacing-value').textContent = letterSpacing;
             document.getElementById('content').style.letterSpacing = `${letterSpacing}em`;
-            
+
             // 保存到localStorage
             const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
             settings.letterSpacing = letterSpacing;
             localStorage.setItem('readerSettings', JSON.stringify(settings));
         }
-        
+
         function changeParagraphSpacing() {
             const paragraphSpacing = document.getElementById('paragraph-spacing-slider').value;
             document.getElementById('paragraph-spacing-value').textContent = `${paragraphSpacing}em`;
-            
+
             // 应用样式到所有段落
             const paragraphs = document.querySelectorAll('#content p');
             paragraphs.forEach(p => {
                 p.style.marginBottom = `${paragraphSpacing}em`;
             });
-            
+
             // 保存到localStorage
             const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
             settings.paragraphSpacing = paragraphSpacing;
             localStorage.setItem('readerSettings', JSON.stringify(settings));
         }
-        
+
         function applyStoredSettings() {
             const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-            
+
             if (settings.fontFamily) {
                 document.getElementById('font-family-selector').value = settings.fontFamily;
                 document.getElementById('content').style.fontFamily = settings.fontFamily;
             }
-            
+
             if (settings.lineHeight) {
                 document.getElementById('line-height-slider').value = settings.lineHeight;
                 document.getElementById('line-height-value').textContent = settings.lineHeight;
                 document.getElementById('content').style.lineHeight = settings.lineHeight;
             }
-            
+
             if (settings.letterSpacing) {
                 document.getElementById('letter-spacing-slider').value = settings.letterSpacing;
                 document.getElementById('letter-spacing-value').textContent = settings.letterSpacing;
                 document.getElementById('content').style.letterSpacing = `${settings.letterSpacing}em`;
             }
-            
+
             if (settings.paragraphSpacing) {
                 document.getElementById('paragraph-spacing-slider').value = settings.paragraphSpacing;
                 document.getElementById('paragraph-spacing-value').textContent = `${settings.paragraphSpacing}em`;
             }
-            
+
             // 分别应用阅读内容和主页字体大小
             if (settings.fontSize) {
                 fontSize = parseInt(settings.fontSize);
@@ -969,7 +1012,7 @@
                     document.getElementById('content').style.fontSize = `${fontSize}px`;
                 }
             }
-            
+
             if (settings.homePageFontSize) {
                 homePageFontSize = parseInt(settings.homePageFontSize);
                 // 只有在主页模式下才应用主页字体大小
@@ -978,7 +1021,7 @@
                 }
             }
         }
-        
+
         function applyHomePageFontSize() {
             // 应用主页字体大小
             if (!currentFileName) {
@@ -993,16 +1036,16 @@
                 });
             }
         }
-        
+
         function changeFontSize(delta) {
             if (currentFileName) {
                 // 阅读模式下，调整阅读字体大小
                 fontSize += delta * 2;
                 if (fontSize < 12) fontSize = 12;
                 if (fontSize > 36) fontSize = 36;
-                
+
                 document.getElementById('content').style.fontSize = `${fontSize}px`;
-                
+
                 // 保存到localStorage
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                 settings.fontSize = fontSize;
@@ -1012,22 +1055,22 @@
                 homePageFontSize += delta * 2;
                 if (homePageFontSize < 12) homePageFontSize = 12;
                 if (homePageFontSize > 24) homePageFontSize = 24;
-                
+
                 applyHomePageFontSize();
-                
+
                 // 保存到localStorage
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                 settings.homePageFontSize = homePageFontSize;
                 localStorage.setItem('readerSettings', JSON.stringify(settings));
             }
         }
-        
+
         function setFontSize(size) {
             if (currentFileName) {
                 // 阅读模式下设置字体大小
                 fontSize = size;
                 document.getElementById('content').style.fontSize = `${fontSize}px`;
-                
+
                 // 保存到localStorage
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                 settings.fontSize = fontSize;
@@ -1036,7 +1079,7 @@
                 // 主页模式下设置字体大小
                 homePageFontSize = size;
                 applyHomePageFontSize();
-                
+
                 // 保存到localStorage
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
                 settings.homePageFontSize = homePageFontSize;
@@ -1045,7 +1088,7 @@
         }
 
         // 修改键盘事件处理，删除数字键调节字体大小和沉浸式阅读模式切换
-        document.addEventListener('keydown', function(e) {
+        document.addEventListener('keydown', function (e) {
             // 左箭头或PageUp - 上一页
             if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
                 previousPage();
@@ -1075,7 +1118,7 @@
 
         function updateChapterList() {
             const chapterList = document.getElementById('chapter-list');
-            chapterList.innerHTML = chapters.map((chapter, index) => 
+            chapterList.innerHTML = chapters.map((chapter, index) =>
                 `<div class="chapter-item ${index === currentChapter ? 'active' : ''}" 
                       onclick="jumpToChapter(${index})">${chapter.title}</div>`
             ).join('');
@@ -1089,15 +1132,15 @@
                 chapter: lastChapter
             };
             localStorage.setItem('pendingRestore', JSON.stringify(pendingRestore));
-            
+
             // 保存这些值到全局变量，以便在 searchFile 的回调中使用
             window.pendingPosition = lastPosition;
             window.pendingChapter = lastChapter;
-            
+
             // 显示加载中
             document.getElementById('loading-overlay').style.display = 'flex';
             document.querySelector('.loading-message').textContent = `正在查找文件: ${fileName}...`;
-            
+
             // 递归搜索文件，先在当前目录搜索，然后在历史搜索目录中搜索
             searchFile([baseDir].concat(searchDirs), fileName);
         }
@@ -1112,7 +1155,7 @@
             // 取出第一个目录
             const currentDir = searchDirectories[0];
             const remainingDirs = searchDirectories.slice(1);
-            
+
             ipcRenderer.invoke('search-file', currentDir, fileName)
                 .then(filePath => {
                     if (filePath) {
@@ -1131,18 +1174,18 @@
                 })
                 .then(data => {
                     if (!data) return; // 如果没有数据，说明已经在递归搜索了
-                    
+
                     // 处理文件内容
                     document.querySelector('.loading-message').textContent = `正在处理文件内容...`;
                     const decoder = new TextDecoder('utf-8');
                     const text = decoder.decode(data);
-                    
+
                     currentFileName = fileName;
-                    
+
                     // 检查保存的进度
                     const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                     const hasProgress = allBookProgress[fileName] !== undefined;
-                    
+
                     // 优先使用传入的位置信息
                     if (window.pendingPosition !== undefined) {
                         currentPage = window.pendingPosition;
@@ -1151,7 +1194,7 @@
                     } else {
                         currentPage = 0;
                     }
-                    
+
                     // 处理章节位置
                     if (window.pendingChapter !== undefined) {
                         currentChapter = window.pendingChapter;
@@ -1160,13 +1203,13 @@
                     } else {
                         currentChapter = 0;
                     }
-                    
+
                     document.getElementById('book-title').textContent = fileName.replace('.txt', '');
-                    
+
                     // 检测章节结构
                     document.querySelector('.loading-message').textContent = '正在分析章节结构...';
                     detectChapters(text);
-                    
+
                     // 清理临时变量
                     window.pendingPosition = undefined;
                     window.pendingChapter = undefined;
@@ -1174,7 +1217,7 @@
                 .catch(error => {
                     console.error('文件读取错误:', error);
                     showNotification(`${error.message}`);
-                    
+
                     // 从历史记录中移除该文件
                     if (error.message.includes('找不到文件')) {
                         // 确认是否从历史记录中删除
@@ -1182,7 +1225,7 @@
                             deleteHistoryRecord(fileName);
                         }
                     }
-                    
+
                     document.getElementById('loading-overlay').style.display = 'none';
                 });
         }
@@ -1190,17 +1233,17 @@
         // 修改添加历史记录的函数，保存更多信息以便计算进度
         function addToHistory(record) {
             let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
-            
+
             // 添加时间戳
             record.timestamp = new Date().getTime();
-            
+
             // 添加章节和页面总数信息，用于计算进度
             if (chapters.length > 0) {
                 record.totalChapters = chapters.length;
             } else if (currentContent) {
                 record.totalPages = Math.ceil(currentContent.length / wordsPerPage);
             }
-            
+
             // 检查是否已存在相同文件名的记录
             const existingIndex = history.findIndex(item => item.fileName === record.fileName);
             if (existingIndex !== -1) {
@@ -1210,22 +1253,22 @@
                 // 删除旧记录
                 history.splice(existingIndex, 1);
             }
-            
+
             // 添加新记录到最前面
             history.unshift(record);
-            
+
             // 限制历史记录数量为50条
             if (history.length > 50) {
                 history.pop();
             }
-            
+
             localStorage.setItem('readingHistory', JSON.stringify(history));
-            
+
             // 如果当前在主页，则更新历史记录显示
             if (!currentFileName) {
                 updateHistoryDisplay();
             }
-            
+
             // 也更新阅读进度存储
             let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
             allBookProgress[record.fileName] = {
@@ -1243,7 +1286,7 @@
         function updateHistoryDisplay() {
             const history = JSON.parse(localStorage.getItem('readingHistory')) || [];
             const content = document.getElementById('content');
-            
+
             // 如果当前没有打开的文件，显示历史记录
             if (!currentFileName) {
                 let historyHtml = '<div class="history-list">';
@@ -1253,7 +1296,7 @@
                     historyHtml += '<button onclick="clearHistory()" class="clear-history-btn">清空历史</button>';
                 }
                 historyHtml += '</div>';
-                
+
                 if (history.length === 0) {
                     historyHtml += '<p class="no-history">暂无阅读记录</p>';
                 } else {
@@ -1263,7 +1306,7 @@
                         const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                         const bookProgress = allBookProgress[record.fileName] || {};
                         const lastReadDate = bookProgress.lastRead ? new Date(bookProgress.lastRead).toLocaleString() : record.date;
-                        
+
                         // 计算阅读进度百分比
                         let progressDisplay = '';
                         if (bookProgress.hasChapters) {
@@ -1285,7 +1328,7 @@
                                 progressDisplay = `读到: 第${bookProgress.page + 1}页`;
                             }
                         }
-                        
+
                         historyHtml += `
                             <div class="history-item" 
                                 data-filename="${record.fileName}"
@@ -1304,10 +1347,10 @@
                     });
                     historyHtml += '</div>';
                 }
-                
+
                 historyHtml += '</div>';
                 content.innerHTML = historyHtml;
-                
+
                 // 应用主页字体大小
                 applyHomePageFontSize();
             }
@@ -1318,14 +1361,14 @@
             let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
             history = history.filter(record => record.fileName !== fileName);
             localStorage.setItem('readingHistory', JSON.stringify(history));
-            
+
             // 同时清除阅读进度
             let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
             if (allBookProgress[fileName]) {
                 delete allBookProgress[fileName];
                 localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
             }
-            
+
             // 更新显示
             updateHistoryDisplay();
             showNotification(`已从历史记录中移除: ${fileName}`);
@@ -1334,13 +1377,13 @@
         // 添加右键菜单相关函数
         function showHistoryContextMenu(event, fileName) {
             event.preventDefault();
-            
+
             // 删除已存在的右键菜单
             const existingMenu = document.getElementById('history-context-menu');
             if (existingMenu) {
                 existingMenu.remove();
             }
-            
+
             // 创建右键菜单
             const menu = document.createElement('div');
             menu.id = 'history-context-menu';
@@ -1359,17 +1402,17 @@
                     管理搜索路径
                 </div>
             `;
-            
+
             // 设置菜单位置
             menu.style.left = event.pageX + 'px';
             menu.style.top = event.pageY + 'px';
-            
+
             // 添加到页面
             document.body.appendChild(menu);
-            
+
             // 存储当前选中的文件名，用于键盘快捷键删除
             window.currentSelectedFileName = fileName;
-            
+
             // 添加键盘事件监听，按D键快速删除
             function handleKeyDown(e) {
                 if (e.key.toLowerCase() === 'd') {
@@ -1379,7 +1422,7 @@
                 }
             }
             document.addEventListener('keydown', handleKeyDown);
-            
+
             // 点击其他地方关闭菜单
             document.addEventListener('click', function closeMenu() {
                 menu.remove();
@@ -1402,12 +1445,12 @@
                     </div>
                     <div class="modal-body">
                         <div class="search-paths-list">
-                            ${searchDirs.map((dir, index) => 
-                                `<div class="search-path-item">
+                            ${searchDirs.map((dir, index) =>
+                `<div class="search-path-item">
                                     <span class="search-path-text">${dir}</span>
                                     <span class="search-path-delete" data-index="${index}">×</span>
                                 </div>`
-                            ).join('')}
+            ).join('')}
                         </div>
                         <div class="search-path-actions">
                             <button id="add-search-path">添加路径</button>
@@ -1415,14 +1458,14 @@
                     </div>
                 </div>
             `;
-            
+
             document.body.appendChild(modal);
-            
+
             // 关闭按钮事件
             modal.querySelector('.modal-close').addEventListener('click', () => {
                 document.body.removeChild(modal);
             });
-            
+
             // 删除路径事件
             modal.querySelectorAll('.search-path-delete').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
@@ -1433,21 +1476,21 @@
                             showNotification('不能删除当前随机阅读路径');
                             return;
                         }
-                        
+
                         searchDirs.splice(index, 1);
-                        
+
                         // 保存配置
-                        await ipcRenderer.invoke('save-config', { 
+                        await ipcRenderer.invoke('save-config', {
                             searchDirs: searchDirs
                         });
-                        
+
                         // 刷新列表
                         manageSearchPaths();
                         document.body.removeChild(modal);
                     }
                 });
             });
-            
+
             // 添加路径事件
             modal.querySelector('#add-search-path').addEventListener('click', async () => {
                 const newPath = await selectCustomPath();
@@ -1465,18 +1508,18 @@
                 if (newPath) {
                     // 保存新路径作为默认路径
                     baseDir = newPath;
-                    
+
                     // 添加到搜索路径列表
                     if (!searchDirs.includes(newPath)) {
                         searchDirs.push(newPath);
                     }
-                    
+
                     // 保存配置
-                    await ipcRenderer.invoke('save-config', { 
+                    await ipcRenderer.invoke('save-config', {
                         baseDir: newPath,
                         searchDirs: searchDirs
                     });
-                    
+
                     showNotification(`已设置新路径: ${newPath}`);
                 }
                 return newPath;
@@ -1490,7 +1533,7 @@
         // 更新进度条
         function updateProgressBar() {
             let percentage = 0;
-            
+
             if (chapters.length === 0) {
                 // 如果没有章节，使用页码计算进度
                 const totalPages = currentContent.length;
@@ -1499,7 +1542,7 @@
                 } else {
                     percentage = 100; // 只有一页则显示100%
                 }
-                
+
                 // 检查进度是否计算正确
                 if (isNaN(percentage) || percentage < 0) {
                     console.warn('进度计算出错:', currentPage, totalPages);
@@ -1509,57 +1552,57 @@
                 // 如果有章节，计算整体进度
                 let totalCharsRead = 0;
                 let totalChars = 0;
-                
+
                 // 计算所有已读章节的字符数
                 for (let i = 0; i < currentChapter; i++) {
                     totalCharsRead += chapters[i].content.length;
                 }
-                
+
                 // 加上当前章节已读的字符数
                 if (chapters[currentChapter]) {
                     totalCharsRead += Math.min(
-                        currentPage * wordsPerPage, 
+                        currentPage * wordsPerPage,
                         chapters[currentChapter].content.length
                     );
                 }
-                
+
                 // 计算所有章节的总字符数
                 for (let i = 0; i < chapters.length; i++) {
                     totalChars += chapters[i].content.length;
                 }
-                
+
                 // 计算百分比
                 if (totalChars > 0) {
                     percentage = (totalCharsRead / totalChars) * 100;
                 }
             }
-            
+
             // 更新进度条和文本
             document.getElementById('progress-bar').style.width = `${Math.min(percentage, 100)}%`;
             document.getElementById('progress-percentage').textContent = `${Math.min(Math.round(percentage), 100)}%`;
-            
+
             // 更新标题显示当前章节或页码
             if (chapters.length > 0 && chapters[currentChapter]) {
                 const chapterTitle = chapters[currentChapter].title;
-                document.getElementById('book-title').textContent = 
+                document.getElementById('book-title').textContent =
                     `${currentFileName.replace('.txt', '')} - ${chapterTitle}`;
             } else if (currentContent && currentContent.length > 0) {
                 // 无章节时显示页码
-                document.getElementById('book-title').textContent = 
+                document.getElementById('book-title').textContent =
                     `${currentFileName.replace('.txt', '')} - 第${currentPage + 1}/${currentContent.length}页`;
             }
         }
-        
+
         // 修改showPage函数以更新进度条
         const originalShowPage = showPage;
-        showPage = function(pageNum, chapterIndex) {
+        showPage = function (pageNum, chapterIndex) {
             originalShowPage(pageNum, chapterIndex);
             updateProgressBar();
         }
-        
+
         // 修改showTextPage函数以更新进度条
         const originalShowTextPage = showTextPage;
-        showTextPage = function(pageNum, totalPages) {
+        showTextPage = function (pageNum, totalPages) {
             originalShowTextPage(pageNum, totalPages);
             updateProgressBar();
         }
@@ -1567,17 +1610,17 @@
         // 修复滚动模式切换和显示
         // 页面滚动模式
         let pageMode = 'page'; // 默认分页模式
-        
-        document.getElementById('page-turn-mode').addEventListener('change', function(e) {
+
+        document.getElementById('page-turn-mode').addEventListener('change', function (e) {
             pageMode = e.target.value;
             const content = document.getElementById('content');
-            
+
             if (pageMode === 'scroll') {
                 // 切换到滚动模式
                 content.style.overflowY = 'auto';
                 content.style.maxHeight = '800px';
                 content.classList.add('scroll-mode');
-                
+
                 // 显示所有内容
                 showAllContent();
             } else {
@@ -1585,7 +1628,7 @@
                 content.style.overflowY = 'hidden';
                 content.style.maxHeight = 'none';
                 content.classList.remove('scroll-mode');
-                
+
                 if (chapters.length > 0) {
                     // 有章节时，显示当前章节
                     showPage(currentPage, currentChapter);
@@ -1596,25 +1639,25 @@
                 }
             }
         });
-        
+
         // 修复显示所有内容的函数
         function showAllContent() {
             const content = document.getElementById('content');
             // 确保内容区域可见
             content.style.display = 'block';
             content.innerHTML = '';
-            
+
             if (chapters.length > 0) {
                 // 有章节的情况
                 for (let i = 0; i < chapters.length; i++) {
                     const chapter = chapters[i];
-                    
+
                     // 添加章节标题
                     const titleElement = document.createElement('h3');
                     titleElement.className = 'chapter-title';
                     titleElement.textContent = chapter.title;
                     content.appendChild(titleElement);
-                    
+
                     // 添加章节内容
                     const lines = chapter.content.split('\n');
                     for (let line of lines) {
@@ -1635,7 +1678,7 @@
                     pageTitle.className = 'page-marker';
                     pageTitle.textContent = `第 ${i + 1} 页`;
                     content.appendChild(pageTitle);
-                    
+
                     // 添加页面内容
                     const pageText = currentContent[i];
                     if (pageText) {
@@ -1659,15 +1702,15 @@
                 // 没有内容
                 content.innerHTML = '<p>没有可显示的内容</p>';
             }
-            
+
             // 滚动到当前阅读位置
             scrollToCurrentPosition();
         }
-        
+
         // 滚动到当前阅读位置
         function scrollToCurrentPosition() {
             const content = document.getElementById('content');
-            
+
             if (chapters.length === 0) {
                 // 没有章节时，根据页码计算滚动位置
                 const scrollPercentage = currentPage / Math.ceil(currentContent.length / wordsPerPage);
@@ -1675,17 +1718,17 @@
             } else if (chapters[currentChapter]) {
                 // 有章节时，查找当前章节标题并滚动到该位置
                 const chapterTitles = content.querySelectorAll('.chapter-title');
-                
+
                 if (chapterTitles.length > currentChapter) {
                     chapterTitles[currentChapter].scrollIntoView();
-                    
+
                     // 计算章节内部滚动位置
                     if (currentPage > 0) {
                         const chapterContent = chapters[currentChapter].content;
                         const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
-                        const scrollOffset = (currentPage / totalPages) * 
+                        const scrollOffset = (currentPage / totalPages) *
                             (chapters[currentChapter].content.length / wordsPerPage) * 24; // 估计每行高度24px
-                        
+
                         content.scrollTop += scrollOffset;
                     }
                 }
@@ -1695,31 +1738,31 @@
         // 自定义右键菜单
         const contextMenu = document.getElementById('context-menu');
         const content = document.getElementById('content');
-        
+
         // 阻止默认右键菜单
-        content.addEventListener('contextmenu', function(e) {
+        content.addEventListener('contextmenu', function (e) {
             e.preventDefault();
-            
+
             // 获取选中的文本
             const selectedText = window.getSelection().toString().trim();
             if (!selectedText) return;
-            
+
             // 显示自定义菜单
             contextMenu.style.display = 'block';
             contextMenu.style.left = `${e.pageX}px`;
             contextMenu.style.top = `${e.pageY}px`;
-            
+
             // 存储选中的文本
             contextMenu.dataset.selectedText = selectedText;
         });
-        
+
         // 点击页面其他区域时隐藏菜单
-        document.addEventListener('click', function() {
+        document.addEventListener('click', function () {
             contextMenu.style.display = 'none';
         });
-        
+
         // 复制选中文本
-        document.getElementById('menu-copy').addEventListener('click', function() {
+        document.getElementById('menu-copy').addEventListener('click', function () {
             const selectedText = contextMenu.dataset.selectedText;
             if (selectedText) {
                 navigator.clipboard.writeText(selectedText)
@@ -1731,25 +1774,25 @@
                     });
             }
         });
-        
+
         // 搜索选中文本
-        document.getElementById('menu-search').addEventListener('click', function() {
+        document.getElementById('menu-search').addEventListener('click', function () {
             const selectedText = contextMenu.dataset.selectedText;
             if (selectedText) {
                 window.open(`https://www.baidu.com/s?wd=${encodeURIComponent(selectedText)}`, '_blank');
             }
         });
-        
+
         // 翻译选中文本
-        document.getElementById('menu-translate').addEventListener('click', function() {
+        document.getElementById('menu-translate').addEventListener('click', function () {
             const selectedText = contextMenu.dataset.selectedText;
             if (selectedText) {
                 window.open(`https://fanyi.baidu.com/#zh/en/${encodeURIComponent(selectedText)}`, '_blank');
             }
         });
-        
+
         // 朗读选中文本
-        document.getElementById('menu-tts').addEventListener('click', function() {
+        document.getElementById('menu-tts').addEventListener('click', function () {
             const selectedText = contextMenu.dataset.selectedText;
             if (selectedText && 'speechSynthesis' in window) {
                 const speech = new SpeechSynthesisUtterance(selectedText);
@@ -1759,14 +1802,14 @@
                 showNotification('您的浏览器不支持语音合成');
             }
         });
-        
+
         // 通知提示
         function showNotification(message) {
             const notification = document.createElement('div');
             notification.className = 'notification';
             notification.textContent = message;
             document.body.appendChild(notification);
-            
+
             // 2秒后自动消失
             setTimeout(() => {
                 notification.classList.add('fadeout');
@@ -1780,10 +1823,10 @@
         function clearHistory() {
             if (confirm('确定要清空所有阅读历史吗？')) {
                 localStorage.removeItem('readingHistory');
-                
+
                 // 清空所有书籍的阅读进度
                 localStorage.removeItem('allBookProgress');
-                
+
                 // 更新界面
                 updateHistoryDisplay();
                 showNotification('已清空所有阅读历史');
@@ -1791,27 +1834,27 @@
         }
 
         // 在页面加载时显示历史记录并加载配置
-        document.addEventListener('DOMContentLoaded', async function() {
+        document.addEventListener('DOMContentLoaded', async function () {
             // 先加载配置
             await loadConfig();
             // 应用存储的字体设置
             applyStoredSettings();
             // 然后更新历史记录显示
             updateHistoryDisplay();
-            
+
             // 添加随机按钮的点击事件监听
             const randomButton = document.getElementById('random-book-btn');
             if (randomButton) {
-                randomButton.addEventListener('click', function(e) {
+                randomButton.addEventListener('click', function (e) {
                     // 检查是否按住了Ctrl键
                     const useCustomPath = e.ctrlKey;
                     loadRandomBook(useCustomPath);
                 });
-                
+
                 // 添加右键菜单
-                randomButton.addEventListener('contextmenu', function(e) {
+                randomButton.addEventListener('contextmenu', function (e) {
                     e.preventDefault();
-                    
+
                     // 创建右键菜单
                     const menu = document.createElement('div');
                     menu.className = 'context-menu';
@@ -1824,14 +1867,14 @@
                             选择随机目录
                         </div>
                     `;
-                    
+
                     // 设置菜单位置
                     menu.style.left = e.pageX + 'px';
                     menu.style.top = e.pageY + 'px';
-                    
+
                     // 添加到页面
                     document.body.appendChild(menu);
-                    
+
                     // 点击其他地方关闭菜单
                     document.addEventListener('click', function closeMenu() {
                         if (menu && menu.parentNode) {
@@ -1850,21 +1893,21 @@
                 // 使用配置值
                 baseDir = config.baseDir || 'E:\\18\\utf';
                 searchDirs = config.searchDirs || [];
-                
+
                 // 确保当前baseDir也在searchDirs中
                 if (!searchDirs.includes(baseDir)) {
                     searchDirs.push(baseDir);
                 }
-                
+
                 wordsPerPage = config.wordsPerPage || 4000;
                 fontSize = config.fontSize || 18;
                 homePageFontSize = config.homePageFontSize || 16;
-                
+
                 // 应用主题设置
                 if (config.theme === 'dark') {
                     document.body.classList.add('dark-mode');
                 }
-                
+
                 // 根据当前模式应用字体大小
                 if (currentFileName) {
                     // 阅读模式
@@ -1873,7 +1916,7 @@
                     // 主页模式
                     applyHomePageFontSize();
                 }
-                
+
                 // 如果配置中禁用了某些功能，可以隐藏对应按钮
                 if (config.hideRandomButton) {
                     const randomButton = document.querySelector('.setting-item[onclick="loadRandomBook()"]');
@@ -1889,10 +1932,10 @@
         // 修改保存进度的函数，确保保存章节信息，支持多本书
         function saveProgress() {
             if (!currentFileName) return; // 如果没有打开文件，不保存
-            
+
             // 获取所有书籍的进度记录
             let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-            
+
             // 更新当前书籍的进度
             allBookProgress[currentFileName] = {
                 page: currentPage,
@@ -1900,10 +1943,10 @@
                 lastRead: new Date().toISOString(),
                 hasChapters: chapters.length > 0  // 记录是否有章节
             };
-            
+
             // 保存所有书籍的进度
             localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
-            
+
             // 更新历史记录
             addToHistory({
                 fileName: currentFileName,
@@ -1920,12 +1963,12 @@
             currentChapter = 0;
             chapters = [];
             updateHistoryDisplay();
-            
+
             // 滚动到顶部，确保首页从顶部开始
             window.scrollTo(0, 0);
             const content = document.getElementById('content');
             if (content) content.scrollTop = 0;
-            
+
             // 应用主页字体大小
             applyHomePageFontSize();
         }
@@ -1938,10 +1981,10 @@
                     await selectCustomPath();
                     return; // 选择完路径后直接返回，不加载书籍
                 }
-                
+
                 // 显示加载中状态
                 document.getElementById('loading-overlay').style.display = 'flex';
-                
+
                 // 获取随机文件
                 const filePath = await ipcRenderer.invoke('get-random-file', baseDir);
                 if (!filePath) {
@@ -1952,11 +1995,11 @@
                 const data = await ipcRenderer.invoke('read-file', filePath);
                 const decoder = new TextDecoder('utf-8');
                 const text = decoder.decode(data);
-                
+
                 // 设置当前文件名
                 currentFileName = filePath.split('\\').pop();
                 document.getElementById('book-title').textContent = currentFileName.replace('.txt', '');
-                
+
                 // 检查是否有保存的进度，从多书籍进度存储中获取
                 const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                 if (allBookProgress[currentFileName]) {
@@ -1991,19 +2034,19 @@
             try {
                 document.getElementById('loading-overlay').style.display = 'flex';
                 document.querySelector('.loading-message').textContent = `正在查找文件: ${fileName}...`;
-                
+
                 // 在所有搜索路径中查找文件
                 const searchPaths = [baseDir].concat(searchDirs);
-                
+
                 // 查找文件并打开其所在目录
                 const result = await ipcRenderer.invoke('find-and-open-file-location', searchPaths, fileName);
-                
+
                 if (result.success) {
                     showNotification(`已打开文件所在位置: ${result.filePath}`);
                 } else {
                     showNotification(`找不到文件: ${fileName}`);
                 }
-                
+
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (error) {
                 console.error('打开文件位置失败:', error);
@@ -2011,27 +2054,191 @@
                 document.getElementById('loading-overlay').style.display = 'none';
             }
         }
-        
+
         // 添加重置随机状态的函数
         async function resetRandomState() {
             try {
                 document.getElementById('loading-overlay').style.display = 'flex';
                 document.querySelector('.loading-message').textContent = '正在重置随机状态...';
-                
+
                 const result = await ipcRenderer.invoke('reset-random-state');
-                
+
                 if (result) {
                     showNotification('随机状态已重置，所有书籍将重新参与随机');
                 } else {
                     showNotification('重置随机状态失败');
                 }
-                
+
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (error) {
                 console.error('重置随机状态失败:', error);
                 showNotification('重置随机状态失败: ' + error.message);
                 document.getElementById('loading-overlay').style.display = 'none';
             }
+        }
+
+        // 显示服务器书库
+        async function showServerLibrary() {
+            try {
+                document.getElementById('loading-overlay').style.display = 'flex';
+                document.querySelector('.loading-message').textContent = '正在获取书库...';
+
+                const files = await ipcRenderer.invoke('get-file-list');
+
+                document.getElementById('loading-overlay').style.display = 'none';
+
+                if (!files || files.length === 0) {
+                    showNotification('书库为空，请上传小说到 books 目录');
+                    return;
+                }
+
+                // 创建模态框显示列表
+                const modal = document.createElement('div');
+                modal.className = 'modal';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column;">
+                        <div class="modal-header">
+                            <h3>云端书库 (${files.length}本)</h3>
+                            <span class="modal-close">&times;</span>
+                        </div>
+                        <div class="modal-body" style="overflow-y: auto; flex: 1;">
+                            <div class="book-list">
+                                ${files.map(file => `
+                                    <div class="book-item" data-path="${file.path.replace(/"/g, '&quot;')}" data-name="${file.name.replace(/"/g, '&quot;')}">
+                                        <div class="book-icon">📄</div>
+                                        <div class="book-info">
+                                            <div class="book-name">${file.name}</div>
+                                            <div class="book-size">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // 添加样式
+                const style = document.createElement('style');
+                style.textContent = `
+                    .book-list { display: flex; flex-direction: column; gap: 10px; }
+                    .book-item { display: flex; align-items: center; padding: 10px; background: #f5f5f5; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
+                    .book-item:hover { background: #e0e0e0; }
+                    .dark-mode .book-item { background: #444; }
+                    .dark-mode .book-item:hover { background: #555; }
+                    .book-icon { font-size: 24px; margin-right: 15px; }
+                    .book-info { flex: 1; }
+                    .book-name { font-weight: bold; margin-bottom: 4px; }
+                    .book-size { font-size: 12px; color: #666; }
+                    .dark-mode .book-size { color: #aaa; }
+                `;
+                modal.appendChild(style);
+
+                document.body.appendChild(modal);
+
+                // 绑定点击事件
+                modal.querySelectorAll('.book-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const path = item.getAttribute('data-path');
+                        const name = item.getAttribute('data-name');
+                        loadServerBook(path, name);
+                        document.body.removeChild(modal);
+                    });
+                });
+
+                modal.querySelector('.modal-close').addEventListener('click', () => {
+                    document.body.removeChild(modal);
+                });
+
+                // 点击遮罩关闭
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) document.body.removeChild(modal);
+                });
+
+            } catch (error) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                console.error('获取书库失败:', error);
+                showNotification('获取书库失败');
+            }
+        }
+
+        async function loadServerBook(filePath, fileName) {
+            try {
+                document.getElementById('loading-overlay').style.display = 'flex';
+                document.querySelector('.loading-message').textContent = '正在加载书籍...';
+
+                const data = await ipcRenderer.invoke('read-file', filePath);
+
+                // data 可能是 Uint8Array (Web) 或 Buffer (Electron)
+                // 转换为 ArrayBuffer
+                let arrayBuffer;
+                if (data.buffer) {
+                    // 如果是 TypedArray 或 Buffer
+                    // 注意：Buffer.buffer 可能是共享的，所以需要 slice
+                    arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+                } else {
+                    // 可能是普通数组或其他
+                    arrayBuffer = new Uint8Array(data).buffer;
+                }
+
+                processFileContent(arrayBuffer, fileName);
+
+            } catch (error) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                console.error('加载书籍失败:', error);
+                showNotification('加载书籍失败: ' + error.message);
+            }
+        }
+
+        // 处理文件内容（复用现有的 Worker 逻辑）
+        function processFileContent(buffer, fileName) {
+            document.getElementById('loading-overlay').style.display = 'flex';
+            document.querySelector('.loading-message').textContent = '正在处理文件内容...';
+
+            currentFileName = fileName;
+
+            const fileWorker = createFileWorker();
+
+            fileWorker.onmessage = function (e) {
+                const result = e.data;
+                if (result.error) {
+                    console.error("文件处理错误:", result.error);
+                    alert("文件处理失败: " + result.error);
+                    document.getElementById('loading-overlay').style.display = 'none';
+                    return;
+                }
+
+                const text = result.text;
+                const encoding = result.encoding || '未知';
+
+                showNotification(`检测到文件编码: ${encoding}`);
+
+                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                if (allBookProgress[currentFileName]) {
+                    currentPage = allBookProgress[currentFileName].page;
+                    currentChapter = allBookProgress[currentFileName].chapter;
+                } else {
+                    currentPage = 0;
+                    currentChapter = 0;
+                }
+
+                document.getElementById('book-title').textContent = fileName.replace('.txt', '');
+                document.querySelector('.loading-message').textContent = '正在分析章节结构...';
+                document.getElementById('content').style.display = 'block';
+
+                detectChapters(text);
+
+                addToHistory({
+                    fileName: currentFileName,
+                    date: new Date().toLocaleString(),
+                    lastPosition: currentPage,
+                    chapter: currentChapter
+                });
+            };
+
+            fileWorker.postMessage({
+                buffer: buffer,
+                fileName: fileName
+            });
         }
     </script>
 
@@ -2043,13 +2250,13 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background-color: rgba(0,0,0,0.5);
+            background-color: rgba(0, 0, 0, 0.5);
             display: flex;
             justify-content: center;
             align-items: center;
             z-index: 1000;
         }
-        
+
         .modal-content {
             background-color: #fff;
             border-radius: 8px;
@@ -2057,14 +2264,14 @@
             max-width: 600px;
             max-height: 80vh;
             overflow-y: auto;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
         }
-        
+
         .dark-mode .modal-content {
             background-color: #333;
             color: #ddd;
         }
-        
+
         .modal-header {
             padding: 15px;
             display: flex;
@@ -2072,26 +2279,26 @@
             align-items: center;
             border-bottom: 1px solid #eee;
         }
-        
+
         .dark-mode .modal-header {
             border-bottom: 1px solid #555;
         }
-        
+
         .modal-close {
             font-size: 24px;
             cursor: pointer;
         }
-        
+
         .modal-body {
             padding: 15px;
         }
-        
+
         .search-paths-list {
             margin-bottom: 15px;
             max-height: 50vh;
             overflow-y: auto;
         }
-        
+
         .search-path-item {
             padding: 10px;
             border-bottom: 1px solid #eee;
@@ -2099,23 +2306,23 @@
             justify-content: space-between;
             align-items: center;
         }
-        
+
         .dark-mode .search-path-item {
             border-bottom: 1px solid #555;
         }
-        
+
         .search-path-delete {
             color: #e74c3c;
             font-size: 18px;
             cursor: pointer;
             padding: 0 5px;
         }
-        
+
         .search-path-actions {
             margin-top: 15px;
             text-align: center;
         }
-        
+
         #add-search-path {
             padding: 8px 15px;
             background-color: #3498db;
@@ -2124,10 +2331,11 @@
             border-radius: 4px;
             cursor: pointer;
         }
-        
+
         .dark-mode #add-search-path {
             background-color: #2980b9;
         }
     </style>
 </body>
+
 </html>

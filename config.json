@@ -1,0 +1,11 @@
+{
+    "baseDir": "/home/ubuntu/TXT-Novel-Reader/books",
+    "searchDirs": [
+        "/home/ubuntu/TXT-Novel-Reader/books"
+    ],
+    "wordsPerPage": 4000,
+    "maxHistory": 50,
+    "fontSize": 18,
+    "homePageFontSize": 16,
+    "theme": "light"
+}
