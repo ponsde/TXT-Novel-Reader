@@ -11,6 +11,7 @@
         // 安全地引入 Electron
         let ipcRenderer;
         let pathModule;
+        let isWebMode = false;
         try {
             const electron = require('electron');
             ipcRenderer = electron.ipcRenderer;
@@ -18,6 +19,7 @@
             console.log('Electron 成功加载');
         } catch (error) {
             console.log('Electron 加载失败，切换到 Web 模式');
+            isWebMode = true;
             // Web 模式下的 ipcRenderer 模拟
             ipcRenderer = {
                 invoke: async (channel, ...args) => {
@@ -47,7 +49,7 @@
                     } catch (e) {
                         console.error(`[Web API] 调用失败: ${channel}`, e);
                         if (channel === 'select-directory') {
-                            alert('Web 模式下不支持选择目录，请手动在 config.json 中配置或将小说放入 books 目录');
+                            // Web 模式下返回 null，由调用方处理
                             return null;
                         }
                         throw e;
@@ -2083,7 +2085,16 @@
         // 设置书库路径
         async function setLibraryPath() {
             try {
-                const newPath = await ipcRenderer.invoke('select-directory');
+                let newPath;
+
+                if (isWebMode) {
+                    // Web 模式下，使用自定义的远程目录选择器
+                    newPath = await showRemotePathSelector();
+                } else {
+                    // Electron 模式下，打开选择对话框
+                    newPath = await ipcRenderer.invoke('select-directory');
+                }
+
                 if (newPath) {
                     // 保存配置
                     await ipcRenderer.invoke('save-config', {
@@ -2093,8 +2104,194 @@
                 }
             } catch (error) {
                 console.error('设置书库路径失败:', error);
-                showNotification('设置书库路径失败: ' + error.message);
+                if (error !== 'cancelled') {
+                    showNotification('设置书库路径失败: ' + error.message);
+                }
             }
+        }
+
+        // 显示远程目录选择器
+        function showRemotePathSelector() {
+            return new Promise(async (resolve, reject) => {
+                // 获取初始路径
+                let currentPath = '';
+                try {
+                    const config = await ipcRenderer.invoke('load-config');
+                    currentPath = config.libraryDir || config.baseDir || '';
+                } catch (e) { }
+
+                const modal = document.createElement('div');
+                modal.className = 'modal';
+
+                // 渲染列表函数
+                async function renderList(path) {
+                    const listContainer = modal.querySelector('.file-list');
+                    const pathDisplay = modal.querySelector('.current-path');
+
+                    listContainer.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div>';
+
+                    try {
+                        const result = await ipcRenderer.invoke('list-directory', path);
+
+                        if (result.error) {
+                            showNotification('无法访问目录: ' + result.error);
+                            // 如果出错，尝试回退到根目录或上级
+                            return;
+                        }
+
+                        currentPath = result.currentPath;
+                        pathDisplay.textContent = currentPath;
+                        pathDisplay.title = currentPath;
+
+                        listContainer.innerHTML = result.items.map(item => `
+                            <div class="file-item ${item.isParent ? 'parent-dir' : ''}" data-path="${item.path.replace(/"/g, '&quot;')}">
+                                <span class="file-icon">${item.isParent ? '⬆️' : '📁'}</span>
+                                <span class="file-name">${item.name}</span>
+                            </div>
+                        `).join('');
+
+                        // 绑定点击事件
+                        listContainer.querySelectorAll('.file-item').forEach(item => {
+                            item.addEventListener('click', () => {
+                                renderList(item.dataset.path);
+                            });
+                        });
+
+                    } catch (error) {
+                        listContainer.innerHTML = `<div style="color:red; padding:10px;">加载失败: ${error.message}</div>`;
+                    }
+                }
+
+                modal.innerHTML = `
+                    <div class="modal-content path-selector-modal">
+                        <div class="modal-header">
+                            <h3>选择服务器文件夹</h3>
+                            <span class="modal-close">&times;</span>
+                        </div>
+                        <div class="path-display-container">
+                            <div class="current-path">正在加载...</div>
+                        </div>
+                        <div class="modal-body custom-scrollbar">
+                            <div class="file-list"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="cancel-btn">取消</button>
+                            <button class="confirm-btn">选择此目录</button>
+                        </div>
+                    </div>
+                `;
+
+                // 添加样式
+                const style = document.createElement('style');
+                style.textContent = `
+                    .path-selector-modal {
+                        width: 500px;
+                        max-width: 90vw;
+                        height: 600px;
+                        max-height: 80vh;
+                        display: flex;
+                        flex-direction: column;
+                        border-radius: 8px;
+                        background: var(--bg-color, #fff);
+                    }
+                    .dark-mode .path-selector-modal {
+                        background: #2d2d2d;
+                        border: 1px solid #444;
+                    }
+                    .path-display-container {
+                        padding: 10px 15px;
+                        background: rgba(0,0,0,0.03);
+                        border-bottom: 1px solid #eee;
+                    }
+                    .dark-mode .path-display-container {
+                        background: rgba(255,255,255,0.03);
+                        border-bottom-color: #444;
+                    }
+                    .current-path {
+                        font-family: monospace;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        font-size: 14px;
+                        color: #666;
+                    }
+                    .dark-mode .current-path { color: #aaa; }
+                    
+                    .file-list { display: flex; flex-direction: column; }
+                    .file-item {
+                        display: flex;
+                        align-items: center;
+                        padding: 10px 15px;
+                        cursor: pointer;
+                        border-bottom: 1px solid #f5f5f5;
+                    }
+                    .dark-mode .file-item { border-bottom-color: #3d3d3d; }
+                    .file-item:hover { background-color: rgba(0,0,0,0.05); }
+                    .dark-mode .file-item:hover { background-color: rgba(255,255,255,0.05); }
+                    
+                    .parent-dir { background-color: rgba(0,0,0,0.02); font-weight: bold; }
+                    .dark-mode .parent-dir { background-color: rgba(255,255,255,0.02); }
+                    
+                    .file-icon { margin-right: 10px; font-size: 18px; }
+                    .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                    
+                    .modal-footer {
+                        padding: 15px;
+                        border-top: 1px solid #eee;
+                        display: flex;
+                        justify-content: flex-end;
+                        gap: 10px;
+                    }
+                    .dark-mode .modal-footer { border-top-color: #444; }
+                    
+                    .confirm-btn, .cancel-btn {
+                        padding: 8px 16px;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        border: none;
+                        font-size: 14px;
+                    }
+                    .confirm-btn { background: #3498db; color: white; }
+                    .confirm-btn:hover { background: #2980b9; }
+                    .cancel-btn { background: #e0e0e0; color: #333; }
+                    .cancel-btn:hover { background: #d0d0d0; }
+                    .dark-mode .cancel-btn { background: #444; color: #ddd; }
+                    .dark-mode .cancel-btn:hover { background: #555; }
+                `;
+                modal.appendChild(style);
+                document.body.appendChild(modal);
+
+                // 初始加载
+                await renderList(currentPath);
+
+                // 绑定按钮事件
+                const close = () => {
+                    if (modal.parentNode) modal.parentNode.removeChild(modal);
+                };
+
+                modal.querySelector('.modal-close').addEventListener('click', () => {
+                    close();
+                    reject('cancelled');
+                });
+
+                modal.querySelector('.cancel-btn').addEventListener('click', () => {
+                    close();
+                    reject('cancelled');
+                });
+
+                modal.querySelector('.confirm-btn').addEventListener('click', () => {
+                    close();
+                    resolve(currentPath);
+                });
+
+                // 点击遮罩关闭
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) {
+                        close();
+                        reject('cancelled');
+                    }
+                });
+            });
         }
 
         // 修改加载配置的函数

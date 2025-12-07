@@ -242,7 +242,60 @@ const apiHandlers = {
         return await getDirectoryTree(libraryDir);
     },
 
-    'search-file': async (args) => {
+    // 列出指定目录下的文件夹（用于Web端选择路径）
+    'list-directory': async (args) => {
+        let dirPath = args[0];
+
+        // 如果未指定路径，默认使用当前工作目录或根目录
+        if (!dirPath) {
+            dirPath = process.cwd();
+        }
+
+        try {
+            const items = [];
+            const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
+
+            // 添加"上级目录"选项（如果不是根目录）
+            const parentDir = path.dirname(dirPath);
+            if (parentDir !== dirPath) {
+                items.push({
+                    name: '..',
+                    path: parentDir,
+                    type: 'directory',
+                    isParent: true
+                });
+            }
+
+            for (const entry of entries) {
+                if (entry.isDirectory()) {
+                    // 忽略隐藏目录
+                    if (entry.name.startsWith('.')) continue;
+
+                    items.push({
+                        name: entry.name,
+                        path: path.join(dirPath, entry.name),
+                        type: 'directory'
+                    });
+                }
+            }
+
+            // 排序
+            items.sort((a, b) => {
+                if (a.isParent) return -1;
+                if (b.isParent) return 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            return {
+                currentPath: dirPath,
+                items: items,
+                separator: path.sep
+            };
+        } catch (error) {
+            console.error(`列出目录失败 ${dirPath}:`, error);
+            return { error: error.message };
+        }
+    }, 'search-file': async (args) => {
         const [baseDir, fileName] = args;
         async function searchInDir(dir) {
             try {

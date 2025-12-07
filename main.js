@@ -433,6 +433,58 @@ ipcMain.handle('get-file-list', async () => {
     }
 });
 
+// 列出指定目录下的文件夹（用于Web端选择路径，虽然Electron有原生对话框，但保持接口一致性）
+ipcMain.handle('list-directory', async (event, dirPath) => {
+    // 如果未指定路径，默认使用文档目录
+    if (!dirPath) {
+        dirPath = app.getPath('documents');
+    }
+
+    try {
+        const items = [];
+        const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
+
+        // 添加"上级目录"
+        const parentDir = path.dirname(dirPath);
+        if (parentDir !== dirPath) {
+            items.push({
+                name: '..',
+                path: parentDir,
+                type: 'directory',
+                isParent: true
+            });
+        }
+
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                // 忽略隐藏目录和系统目录
+                if (entry.name.startsWith('.') || entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
+
+                items.push({
+                    name: entry.name,
+                    path: path.join(dirPath, entry.name),
+                    type: 'directory'
+                });
+            }
+        }
+
+        items.sort((a, b) => {
+            if (a.isParent) return -1;
+            if (b.isParent) return 1;
+            return a.name.localeCompare(b.name);
+        });
+
+        return {
+            currentPath: dirPath,
+            items: items,
+            separator: path.sep
+        };
+    } catch (error) {
+        console.error(`列出目录失败 ${dirPath}:`, error);
+        return { error: error.message };
+    }
+});
+
 // 添加保存配置的处理函数
 ipcMain.handle('save-config', async (event, newSettings) => {
     try {
