@@ -48,16 +48,70 @@ async function saveRandomState() {
     }
 }
 
-// 辅助函数：递归获取所有 TXT 文件
+// 辅助函数：获取目录树结构
+async function getDirectoryTree(dir, relativePath = '') {
+    const items = [];
+    try {
+        const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const entryRelativePath = path.join(relativePath, entry.name);
+
+            if (entry.isDirectory()) {
+                // 递归获取子目录
+                const children = await getDirectoryTree(fullPath, entryRelativePath);
+                // 只有当目录不为空时才添加
+                if (children.length > 0) {
+                    items.push({
+                        name: entry.name,
+                        path: fullPath, // 服务器绝对路径，用于读取
+                        relativePath: entryRelativePath, // 相对路径，用于展示
+                        type: 'directory',
+                        children: children
+                    });
+                }
+            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+                items.push({
+                    name: entry.name,
+                    path: fullPath,
+                    relativePath: entryRelativePath,
+                    type: 'file',
+                    size: fs.statSync(fullPath).size
+                });
+            }
+        }
+
+        // 排序：文件夹在前，文件在后
+        items.sort((a, b) => {
+            if (a.type === b.type) return a.name.localeCompare(b.name);
+            return a.type === 'directory' ? -1 : 1;
+        });
+
+    } catch (e) {
+        console.error(`无法扫描目录 ${dir}:`, e);
+    }
+    return items;
+}
+
+// 递归获取所有 TXT 文件
 async function getAllTxtFiles(dir) {
     const files = [];
-    async function scan(directory) {
+    const IGNORED_DIRS = new Set([
+        'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', 'coverage',
+        '$RECYCLE.BIN', 'System Volume Information', 'Windows', 'Program Files', 'Program Files (x86)'
+    ]);
+    const MAX_DEPTH = 10;
+
+    async function scan(directory, depth = 0) {
+        if (depth > MAX_DEPTH) return;
         try {
             const entries = await fsPromises.readdir(directory, { withFileTypes: true });
             for (const entry of entries) {
                 const fullPath = path.join(directory, entry.name);
                 if (entry.isDirectory()) {
-                    await scan(fullPath);
+                    if (!IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+                        await scan(fullPath, depth + 1);
+                    }
                 } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
                     files.push(fullPath);
                 }
@@ -74,10 +128,13 @@ async function getAllTxtFiles(dir) {
 const apiHandlers = {
     'load-config': async () => {
         const configPath = path.join(BASE_DIR, CONFIG_FILE);
+        // 优先使用环境变量中的 BOOKS_DIR
+        const envBooksDir = process.env.BOOKS_DIR;
+
         if (!fs.existsSync(configPath)) {
             const defaultConfig = {
-                baseDir: path.join(BASE_DIR, 'books'), // 默认书籍目录
-                searchDirs: [path.join(BASE_DIR, 'books')],
+                baseDir: envBooksDir || path.join(BASE_DIR, 'books'), // 默认书籍目录
+                searchDirs: [envBooksDir || path.join(BASE_DIR, 'books')],
                 wordsPerPage: 4000,
                 maxHistory: 50,
                 fontSize: 18,
@@ -86,7 +143,7 @@ const apiHandlers = {
             };
             // 确保 books 目录存在
             if (!fs.existsSync(defaultConfig.baseDir)) {
-                try { await fsPromises.mkdir(defaultConfig.baseDir); } catch (e) { }
+                try { await fsPromises.mkdir(defaultConfig.baseDir, { recursive: true }); } catch (e) { }
             }
             await fsPromises.writeFile(configPath, JSON.stringify(defaultConfig, null, 4));
             return defaultConfig;
@@ -97,14 +154,22 @@ const apiHandlers = {
         // 检查路径是否存在，不存在则修正为默认
         // 这对于从其他环境（如 Windows）迁移过来的配置文件很有用
         let configChanged = false;
+
+        // 如果环境变量设置了 BOOKS_DIR，覆盖配置
+        if (envBooksDir && config.baseDir !== envBooksDir) {
+            config.baseDir = envBooksDir;
+            config.searchDirs = [envBooksDir]; // 重置搜索目录
+            configChanged = true;
+        }
+
         if (!config.baseDir || !fs.existsSync(config.baseDir)) {
-            config.baseDir = path.join(BASE_DIR, 'books');
+            config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
             config.searchDirs = [config.baseDir];
             configChanged = true;
 
             // 确保 books 目录存在
             if (!fs.existsSync(config.baseDir)) {
-                try { await fsPromises.mkdir(config.baseDir); } catch (e) { }
+                try { await fsPromises.mkdir(config.baseDir, { recursive: true }); } catch (e) { }
             }
         }
 
@@ -130,7 +195,7 @@ const apiHandlers = {
             config = JSON.parse(configData);
         } catch (error) {
             config = {
-                baseDir: path.join(BASE_DIR, 'books'),
+                baseDir: process.env.BOOKS_DIR || path.join(BASE_DIR, 'books'),
                 wordsPerPage: 4000,
                 maxHistory: 10,
                 fontSize: 18,
@@ -150,23 +215,31 @@ const apiHandlers = {
     },
 
     'get-file-list': async (args) => {
-        // 获取配置中的 baseDir
+        // 获取配置
         const configPath = path.join(BASE_DIR, CONFIG_FILE);
-        let baseDir = path.join(BASE_DIR, 'books');
+        let libraryDir = '';
+
         try {
             if (fs.existsSync(configPath)) {
                 const configData = await fsPromises.readFile(configPath, 'utf8');
                 const config = JSON.parse(configData);
-                if (config.baseDir) baseDir = config.baseDir;
+                // 优先使用 libraryDir，如果没有则使用 baseDir
+                libraryDir = config.libraryDir || config.baseDir;
             }
         } catch (e) { }
 
-        const files = await getAllTxtFiles(baseDir);
-        return files.map(f => ({
-            name: path.basename(f),
-            path: f,
-            size: fs.statSync(f).size
-        }));
+        // 如果环境变量强制指定，则使用环境变量
+        if (process.env.BOOKS_DIR) {
+            libraryDir = process.env.BOOKS_DIR;
+        }
+
+        // 如果没有配置路径，使用默认 books 目录
+        if (!libraryDir) {
+            libraryDir = path.join(BASE_DIR, 'books');
+        }
+
+        // 返回树状结构
+        return await getDirectoryTree(libraryDir);
     },
 
     'search-file': async (args) => {

@@ -10,9 +10,11 @@
     <script>
         // 安全地引入 Electron
         let ipcRenderer;
+        let pathModule;
         try {
             const electron = require('electron');
             ipcRenderer = electron.ipcRenderer;
+            pathModule = require('path');
             console.log('Electron 成功加载');
         } catch (error) {
             console.log('Electron 加载失败，切换到 Web 模式');
@@ -91,7 +93,7 @@
                     <i class="icon">🎲</i>
                     <span>随机</span>
                 </div>
-                <div class="setting-item" id="library-btn" onclick="showServerLibrary()">
+                <div class="setting-item" id="library-btn">
                     <i class="icon">📚</i>
                     <span>书库</span>
                 </div>
@@ -204,13 +206,32 @@
         let currentChapter = 0;
         let fontSize = 18; // 阅读内容的字体大小
         let homePageFontSize = 16; // 主页字体大小
-        let baseDir = 'E:\\18\\utf'; // 随机阅读的路径
+        let baseDir = ''; // 随机阅读的路径
         let searchDirs = []; // 历史记录搜索路径列表
         let wordsPerPage = 4000;
 
-        document.getElementById('file-input').addEventListener('change', function (e) {
+        document.getElementById('file-input').addEventListener('change', async function (e) {
             const file = e.target.files[0];
             if (!file) return;
+
+            // 自动添加文件所在目录到搜索路径
+            if (file.path && pathModule) {
+                try {
+                    const fileDir = pathModule.dirname(file.path);
+                    // 检查是否已经在搜索路径中
+                    if (!searchDirs.includes(fileDir)) {
+                        searchDirs.push(fileDir);
+
+                        // 保存配置
+                        await ipcRenderer.invoke('save-config', {
+                            searchDirs: searchDirs
+                        });
+                        console.log(`已自动添加搜索路径: ${fileDir}`);
+                    }
+                } catch (err) {
+                    console.error('自动添加搜索路径失败:', err);
+                }
+            }
 
             currentFileName = file.name;
             document.getElementById('loading-overlay').style.display = 'flex';
@@ -247,11 +268,11 @@
                         // 合并所有块
                         const completeBuffer = mergeArrayBuffers(chunks);
 
-                        // 使用 Worker 处理文件解码
+                        // 使用 Worker 处理文件解码，并使用 Transferable Objects 转移所有权，避免拷贝
                         fileWorker.postMessage({
                             buffer: completeBuffer,
                             fileName: file.name
-                        });
+                        }, [completeBuffer]);
                     }
                 }
             };
@@ -280,7 +301,15 @@
 
                 // 检查是否有保存的进度，从多书籍进度存储中获取
                 const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-                if (allBookProgress[currentFileName]) {
+
+                // 优先使用 window.pendingPosition (来自历史记录点击)
+                if (window.pendingPosition !== undefined) {
+                    currentPage = window.pendingPosition;
+                    currentChapter = window.pendingChapter || 0;
+                    // 清理临时变量
+                    window.pendingPosition = undefined;
+                    window.pendingChapter = undefined;
+                } else if (allBookProgress[currentFileName]) {
                     currentPage = allBookProgress[currentFileName].page;
                     currentChapter = allBookProgress[currentFileName].chapter;
                 } else {
@@ -1142,96 +1171,118 @@
             document.querySelector('.loading-message').textContent = `正在查找文件: ${fileName}...`;
 
             // 递归搜索文件，先在当前目录搜索，然后在历史搜索目录中搜索
-            searchFile([baseDir].concat(searchDirs), fileName);
+            // 确保 searchDirs 已经包含了 baseDir，并且去重
+            const allPaths = [baseDir].concat(searchDirs);
+            searchFile(allPaths, fileName);
         }
 
-        function searchFile(searchDirectories, fileName) {
-            if (!searchDirectories || searchDirectories.length === 0) {
+        // 递归搜索文件，使用 find-and-open-file-location 的逻辑，但只返回路径
+        async function searchFile(searchDirectories, fileName) {
+            try {
+                // 去重并过滤空路径
+                const uniqueDirs = [...new Set(searchDirectories)].filter(dir => dir);
+
+                if (uniqueDirs.length === 0) {
+                    throw new Error('没有可用的搜索路径');
+                }
+
+                // 使用主进程的 find-and-open-file-location 逻辑来查找文件
+                // 但我们需要一个新的 IPC 接口只返回路径而不打开文件夹
+                // 这里我们复用 search-file 接口，但需要修改它的调用方式
+                // 或者我们可以直接在前端循环调用，但为了效率，最好在后端做
+
+                // 既然用户反馈速度慢，我们尝试并行搜索所有路径
+                // 但为了保证优先级，我们还是按顺序或者分组并行
+
+                // 这里我们修改策略：直接调用一个新的 IPC 接口，让主进程去处理优先级和并行
+                // 我们先用现有的 search-file 接口，但要在前端控制好逻辑
+
+                // 实际上，之前的递归逻辑是串行的，确实慢
+                // 我们改为并行搜索，但保留优先级
+
+                // 创建一个 Promise 数组，每个目录一个搜索任务
+                // 但为了优先级，我们不能简单地 Promise.any，因为那会返回最快的结果而不是优先级最高的结果
+
+                // 更好的方法是：让主进程提供一个 'find-file-in-paths' 接口
+                // 既然不能改主进程接口（或者改起来麻烦），我们在前端优化
+
+                // 尝试使用 find-and-open-file-location 的逻辑变体
+                // 但这里我们直接修改 searchFile 函数，不再递归，而是使用循环 + await
+
+                let foundPath = null;
+
+                // 优先搜索 searchDirs 中的路径（按顺序）
+                // 为了提高速度，我们可以分批并行，比如每3个目录一组
+                const BATCH_SIZE = 3;
+
+                for (let i = 0; i < uniqueDirs.length; i += BATCH_SIZE) {
+                    const batch = uniqueDirs.slice(i, i + BATCH_SIZE);
+                    const promises = batch.map(dir => ipcRenderer.invoke('search-file', dir, fileName));
+
+                    const results = await Promise.all(promises);
+
+                    // 检查这一批次有没有找到
+                    // 注意：我们要按 batch 中的顺序来检查结果，以保持优先级
+                    for (let j = 0; j < results.length; j++) {
+                        if (results[j]) {
+                            foundPath = results[j];
+                            break;
+                        }
+                    }
+
+                    if (foundPath) break;
+                }
+
+                if (foundPath) {
+                    document.querySelector('.loading-message').textContent = `正在加载文件: ${fileName}...`;
+                    const data = await ipcRenderer.invoke('read-file', foundPath);
+
+                    // 使用 processFileContent 处理内容（包含自动编码检测）
+                    // 注意：data 可能是 Buffer 或 Uint8Array
+                    let arrayBuffer;
+                    if (data.buffer) {
+                        arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+                    } else {
+                        arrayBuffer = new Uint8Array(data).buffer;
+                    }
+
+                    processFileContent(arrayBuffer, fileName);
+
+                    // 恢复进度逻辑移到 processFileContent 的回调或后续处理中
+                    // 但 processFileContent 是异步的（通过 Worker），我们需要传递恢复参数
+                    // 这里我们通过全局变量传递，或者修改 processFileContent
+                    // 现有的 processFileContent 已经会读取 localStorage，但我们需要优先使用 pendingPosition
+
+                    // 由于 processFileContent 内部使用了 Worker 且没有返回 Promise，
+                    // 我们依赖它内部的 onmessage 来处理后续逻辑
+                    // 现有的 processFileContent 逻辑中已经有从 localStorage 读取进度的代码
+                    // 我们需要确保它能使用 window.pendingPosition
+
+                } else {
+                    throw new Error(`找不到文件: ${fileName}`);
+                }
+
+            } catch (error) {
+                console.error('文件读取错误:', error);
+                showNotification(`${error.message}`);
+
+                if (error.message.includes('找不到文件')) {
+                    if (confirm(`${fileName} 文件不存在，是否从历史记录中删除？`)) {
+                        deleteHistoryRecord(fileName);
+                    }
+                }
                 document.getElementById('loading-overlay').style.display = 'none';
-                showNotification(`找不到文件: ${fileName}`);
-                return;
             }
-
-            // 取出第一个目录
-            const currentDir = searchDirectories[0];
-            const remainingDirs = searchDirectories.slice(1);
-
-            ipcRenderer.invoke('search-file', currentDir, fileName)
-                .then(filePath => {
-                    if (filePath) {
-                        document.querySelector('.loading-message').textContent = `正在加载文件: ${fileName}...`;
-                        return ipcRenderer.invoke('read-file', filePath);
-                    } else {
-                        // 如果在当前目录没找到，尝试下一个目录
-                        if (remainingDirs.length > 0) {
-                            document.querySelector('.loading-message').textContent = `在 ${currentDir} 中未找到，继续搜索...`;
-                            searchFile(remainingDirs, fileName);
-                        } else {
-                            throw new Error(`找不到文件: ${fileName}`);
-                        }
-                        return null;
-                    }
-                })
-                .then(data => {
-                    if (!data) return; // 如果没有数据，说明已经在递归搜索了
-
-                    // 处理文件内容
-                    document.querySelector('.loading-message').textContent = `正在处理文件内容...`;
-                    const decoder = new TextDecoder('utf-8');
-                    const text = decoder.decode(data);
-
-                    currentFileName = fileName;
-
-                    // 检查保存的进度
-                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-                    const hasProgress = allBookProgress[fileName] !== undefined;
-
-                    // 优先使用传入的位置信息
-                    if (window.pendingPosition !== undefined) {
-                        currentPage = window.pendingPosition;
-                    } else if (hasProgress) {
-                        currentPage = allBookProgress[fileName].page || 0;
-                    } else {
-                        currentPage = 0;
-                    }
-
-                    // 处理章节位置
-                    if (window.pendingChapter !== undefined) {
-                        currentChapter = window.pendingChapter;
-                    } else if (hasProgress) {
-                        currentChapter = allBookProgress[fileName].chapter || 0;
-                    } else {
-                        currentChapter = 0;
-                    }
-
-                    document.getElementById('book-title').textContent = fileName.replace('.txt', '');
-
-                    // 检测章节结构
-                    document.querySelector('.loading-message').textContent = '正在分析章节结构...';
-                    detectChapters(text);
-
-                    // 清理临时变量
-                    window.pendingPosition = undefined;
-                    window.pendingChapter = undefined;
-                })
-                .catch(error => {
-                    console.error('文件读取错误:', error);
-                    showNotification(`${error.message}`);
-
-                    // 从历史记录中移除该文件
-                    if (error.message.includes('找不到文件')) {
-                        // 确认是否从历史记录中删除
-                        if (confirm(`${fileName} 文件不存在，是否从历史记录中删除？`)) {
-                            deleteHistoryRecord(fileName);
-                        }
-                    }
-
-                    document.getElementById('loading-overlay').style.display = 'none';
-                });
         }
 
         // 修改添加历史记录的函数，保存更多信息以便计算进度
         function addToHistory(record) {
+            // 验证记录有效性
+            if (!record || !record.fileName || record.fileName.trim() === '') {
+                console.warn('尝试添加无效的历史记录:', record);
+                return;
+            }
+
             let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
 
             // 添加时间戳
@@ -1284,7 +1335,17 @@
 
         // 修改历史记录显示
         function updateHistoryDisplay() {
-            const history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+            let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+
+            // 过滤掉无效的历史记录（没有文件名的记录）
+            const validHistory = history.filter(record => record && record.fileName && record.fileName.trim() !== '');
+
+            // 如果发现无效记录，更新 localStorage
+            if (validHistory.length !== history.length) {
+                history = validHistory;
+                localStorage.setItem('readingHistory', JSON.stringify(history));
+            }
+
             const content = document.getElementById('content');
 
             // 如果当前没有打开的文件，显示历史记录
@@ -1302,6 +1363,9 @@
                 } else {
                     historyHtml += '<div class="history-items">';
                     history.forEach(record => {
+                        // 再次检查文件名，确保安全
+                        if (!record.fileName) return;
+
                         // 获取该书籍的最新进度信息
                         const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                         const bookProgress = allBookProgress[record.fileName] || {};
@@ -1440,17 +1504,25 @@
             modal.innerHTML = `
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h3>管理搜索路径</h3>
+                        <h3>管理搜索路径 (可拖拽排序)</h3>
                         <span class="modal-close">&times;</span>
                     </div>
                     <div class="modal-body">
-                        <div class="search-paths-list">
-                            ${searchDirs.map((dir, index) =>
-                `<div class="search-path-item">
-                                    <span class="search-path-text">${dir}</span>
-                                    <span class="search-path-delete" data-index="${index}">×</span>
-                                </div>`
-            ).join('')}
+                        <div class="search-paths-list" id="search-paths-list">
+                            ${searchDirs.map((dir, index) => {
+                const isBaseDir = dir === baseDir;
+                return `<div class="search-path-item ${isBaseDir ? 'active-base-dir' : ''}" draggable="true" data-index="${index}">
+                                    <span class="drag-handle">☰</span>
+                                    <div class="path-info">
+                                        <span class="search-path-text" title="${dir}">${dir}</span>
+                                        ${isBaseDir ? '<span class="base-dir-tag">当前随机源</span>' : ''}
+                                    </div>
+                                    <div class="path-actions">
+                                        ${!isBaseDir ? `<button class="set-base-btn" data-index="${index}" title="设为随机阅读路径">设为随机源</button>` : ''}
+                                        <span class="search-path-delete" data-index="${index}">×</span>
+                                    </div>
+                                </div>`;
+            }).join('')}
                         </div>
                         <div class="search-path-actions">
                             <button id="add-search-path">添加路径</button>
@@ -1459,7 +1531,113 @@
                 </div>
             `;
 
+            // 添加样式
+            const style = document.createElement('style');
+            style.textContent = `
+                .search-path-item { cursor: move; user-select: none; display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+                .search-path-item.active-base-dir { background-color: #f0f9ff; border-left: 4px solid #2196F3; }
+                .dark-mode .search-path-item.active-base-dir { background-color: #2c3e50; border-left: 4px solid #3498db; }
+                .search-path-item.dragging { opacity: 0.5; background: #e0e0e0; }
+                .drag-handle { margin-right: 10px; cursor: grab; color: #888; font-size: 18px; }
+                .path-info { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+                .search-path-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .base-dir-tag { font-size: 12px; color: #2196F3; margin-top: 2px; font-weight: bold; }
+                .path-actions { display: flex; align-items: center; gap: 10px; }
+                .set-base-btn { padding: 2px 8px; font-size: 12px; background: #e0e0e0; border: none; border-radius: 4px; cursor: pointer; }
+                .set-base-btn:hover { background: #d0d0d0; }
+                .search-path-delete { color: #e74c3c; font-size: 20px; cursor: pointer; padding: 0 5px; }
+            `;
+            modal.appendChild(style);
+
             document.body.appendChild(modal);
+
+            // 绑定设为随机源按钮事件
+            modal.querySelectorAll('.set-base-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const index = parseInt(e.target.dataset.index);
+                    if (index >= 0 && index < searchDirs.length) {
+                        baseDir = searchDirs[index];
+
+                        // 保存配置
+                        await ipcRenderer.invoke('save-config', {
+                            baseDir: baseDir,
+                            searchDirs: searchDirs
+                        });
+
+                        showNotification(`已将随机阅读路径设置为: ${baseDir}`);
+
+                        // 刷新列表
+                        document.body.removeChild(modal);
+                        manageSearchPaths();
+                    }
+                });
+            });
+
+            // 拖拽逻辑
+            const list = modal.querySelector('#search-paths-list');
+            let draggedItem = null;
+
+            list.addEventListener('dragstart', (e) => {
+                draggedItem = e.target.closest('.search-path-item');
+                if (draggedItem) {
+                    draggedItem.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', draggedItem.dataset.index);
+                }
+            });
+
+            list.addEventListener('dragend', () => {
+                if (draggedItem) {
+                    draggedItem.classList.remove('dragging');
+                    draggedItem = null;
+
+                    // 重新构建数组
+                    const newSearchDirs = [];
+                    list.querySelectorAll('.search-path-item .search-path-text').forEach(span => {
+                        newSearchDirs.push(span.title || span.textContent);
+                    });
+
+                    // 检查是否有变化
+                    if (JSON.stringify(searchDirs) !== JSON.stringify(newSearchDirs)) {
+                        searchDirs = newSearchDirs;
+                        // 保存配置
+                        ipcRenderer.invoke('save-config', {
+                            searchDirs: searchDirs
+                        }).then(() => {
+                            // 重新渲染列表以更新索引
+                            document.body.removeChild(modal);
+                            manageSearchPaths();
+                        });
+                    }
+                }
+            });
+
+            list.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                const afterElement = getDragAfterElement(list, e.clientY);
+                const draggable = document.querySelector('.dragging');
+                if (draggable) {
+                    if (afterElement == null) {
+                        list.appendChild(draggable);
+                    } else {
+                        list.insertBefore(draggable, afterElement);
+                    }
+                }
+            });
+
+            function getDragAfterElement(container, y) {
+                const draggableElements = [...container.querySelectorAll('.search-path-item:not(.dragging)')];
+
+                return draggableElements.reduce((closest, child) => {
+                    const box = child.getBoundingClientRect();
+                    const offset = y - box.top - box.height / 2;
+                    if (offset < 0 && offset > closest.offset) {
+                        return { offset: offset, element: child };
+                    } else {
+                        return closest;
+                    }
+                }, { offset: Number.NEGATIVE_INFINITY }).element;
+            }
 
             // 关闭按钮事件
             modal.querySelector('.modal-close').addEventListener('click', () => {
@@ -1469,15 +1647,17 @@
             // 删除路径事件
             modal.querySelectorAll('.search-path-delete').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    const index = parseInt(e.target.dataset.index);
+                    // 重新获取当前DOM中的索引，因为拖拽可能改变了顺序
+                    const item = e.target.closest('.search-path-item');
+                    const allItems = Array.from(list.querySelectorAll('.search-path-item'));
+                    const index = allItems.indexOf(item);
+
                     if (index >= 0 && index < searchDirs.length) {
                         // 如果是当前随机阅读路径，不允许删除
                         if (searchDirs[index] === baseDir) {
-                            showNotification('不能删除当前随机阅读路径');
+                            showNotification('不能删除当前随机阅读路径，请先将其他路径设为随机源');
                             return;
-                        }
-
-                        searchDirs.splice(index, 1);
+                        } searchDirs.splice(index, 1);
 
                         // 保存配置
                         await ipcRenderer.invoke('save-config', {
@@ -1884,14 +2064,45 @@
                     });
                 });
             }
+
+            // 添加书库按钮的点击事件监听
+            const libraryButton = document.getElementById('library-btn');
+            if (libraryButton) {
+                libraryButton.addEventListener('click', async function (e) {
+                    if (e.ctrlKey) {
+                        // 按住 Ctrl 键，设置书库路径
+                        await setLibraryPath();
+                    } else {
+                        // 普通点击，显示书库
+                        showServerLibrary();
+                    }
+                });
+            }
         });
+
+        // 设置书库路径
+        async function setLibraryPath() {
+            try {
+                const newPath = await ipcRenderer.invoke('select-directory');
+                if (newPath) {
+                    // 保存配置
+                    await ipcRenderer.invoke('save-config', {
+                        libraryDir: newPath
+                    });
+                    showNotification(`已设置书库路径: ${newPath}`);
+                }
+            } catch (error) {
+                console.error('设置书库路径失败:', error);
+                showNotification('设置书库路径失败: ' + error.message);
+            }
+        }
 
         // 修改加载配置的函数
         async function loadConfig() {
             try {
                 const config = await ipcRenderer.invoke('load-config');
                 // 使用配置值
-                baseDir = config.baseDir || 'E:\\18\\utf';
+                baseDir = config.baseDir || '';
                 searchDirs = config.searchDirs || [];
 
                 // 确保当前baseDir也在searchDirs中
@@ -1993,33 +2204,21 @@
 
                 // 获取文件内容
                 const data = await ipcRenderer.invoke('read-file', filePath);
-                const decoder = new TextDecoder('utf-8');
-                const text = decoder.decode(data);
 
-                // 设置当前文件名
-                currentFileName = filePath.split('\\').pop();
-                document.getElementById('book-title').textContent = currentFileName.replace('.txt', '');
-
-                // 检查是否有保存的进度，从多书籍进度存储中获取
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-                if (allBookProgress[currentFileName]) {
-                    currentPage = allBookProgress[currentFileName].page;
-                    currentChapter = allBookProgress[currentFileName].chapter;
+                // data 可能是 Uint8Array (Web) 或 Buffer (Electron)
+                // 转换为 ArrayBuffer
+                let arrayBuffer;
+                if (data.buffer) {
+                    // 如果是 TypedArray 或 Buffer
+                    // 注意：Buffer.buffer 可能是共享的，所以需要 slice
+                    arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
                 } else {
-                    currentPage = 0;
-                    currentChapter = 0;
+                    // 可能是普通数组或其他
+                    arrayBuffer = new Uint8Array(data).buffer;
                 }
 
-                // 处理章节和显示内容
-                detectChapters(text);
-
-                // 添加到历史记录
-                addToHistory({
-                    fileName: currentFileName,
-                    date: new Date().toLocaleString(),
-                    lastPosition: currentPage,
-                    chapter: currentChapter
-                });
+                // 使用 processFileContent 处理内容（包含自动编码检测）
+                processFileContent(arrayBuffer, currentFileName);
 
                 document.getElementById('loading-overlay').style.display = 'none';
             } catch (error) {
@@ -2092,26 +2291,57 @@
                     return;
                 }
 
+                // 禁止背景滚动
+                document.body.style.overflow = 'hidden';
+
                 // 创建模态框显示列表
                 const modal = document.createElement('div');
                 modal.className = 'modal';
+
+                // 递归生成文件树 HTML
+                function generateTreeHtml(items, level = 0) {
+                    if (!items || items.length === 0) return '';
+
+                    return items.map(item => {
+                        const paddingLeft = level * 24 + 10; // 增加缩进
+                        if (item.type === 'directory') {
+                            return `
+                                <div class="tree-item directory collapsed">
+                                    <div class="tree-content" style="padding-left: ${paddingLeft}px">
+                                        <span class="tree-icon">📁</span>
+                                        <span class="tree-name">${item.name}</span>
+                                        <span class="tree-meta">${item.children.length} 项</span>
+                                    </div>
+                                    <div class="tree-children" style="display: none;">
+                                        ${generateTreeHtml(item.children, level + 1)}
+                                    </div>
+                                </div>
+                            `;
+                        } else {
+                            return `
+                                <div class="tree-item file" 
+                                     data-path="${item.path.replace(/"/g, '&quot;')}" 
+                                     data-name="${item.name.replace(/"/g, '&quot;')}">
+                                    <div class="tree-content" style="padding-left: ${paddingLeft}px">
+                                        <span class="tree-icon">📄</span>
+                                        <span class="tree-name">${item.name}</span>
+                                        <span class="tree-meta">${(item.size / 1024 / 1024).toFixed(2)} MB</span>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    }).join('');
+                }
+
                 modal.innerHTML = `
-                    <div class="modal-content" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column;">
+                    <div class="modal-content library-modal">
                         <div class="modal-header">
-                            <h3>云端书库 (${files.length}本)</h3>
+                            <h3>云端书库</h3>
                             <span class="modal-close">&times;</span>
                         </div>
-                        <div class="modal-body" style="overflow-y: auto; flex: 1;">
-                            <div class="book-list">
-                                ${files.map(file => `
-                                    <div class="book-item" data-path="${file.path.replace(/"/g, '&quot;')}" data-name="${file.name.replace(/"/g, '&quot;')}">
-                                        <div class="book-icon">📄</div>
-                                        <div class="book-info">
-                                            <div class="book-name">${file.name}</div>
-                                            <div class="book-size">${(file.size / 1024 / 1024).toFixed(2)} MB</div>
-                                        </div>
-                                    </div>
-                                `).join('')}
+                        <div class="modal-body custom-scrollbar">
+                            <div class="file-tree">
+                                ${generateTreeHtml(files)}
                             </div>
                         </div>
                     </div>
@@ -2120,38 +2350,120 @@
                 // 添加样式
                 const style = document.createElement('style');
                 style.textContent = `
-                    .book-list { display: flex; flex-direction: column; gap: 10px; }
-                    .book-item { display: flex; align-items: center; padding: 10px; background: #f5f5f5; border-radius: 8px; cursor: pointer; transition: background 0.2s; }
-                    .book-item:hover { background: #e0e0e0; }
-                    .dark-mode .book-item { background: #444; }
-                    .dark-mode .book-item:hover { background: #555; }
-                    .book-icon { font-size: 24px; margin-right: 15px; }
-                    .book-info { flex: 1; }
-                    .book-name { font-weight: bold; margin-bottom: 4px; }
-                    .book-size { font-size: 12px; color: #666; }
-                    .dark-mode .book-size { color: #aaa; }
+                    .library-modal {
+                        max-width: 600px; 
+                        max-height: 85vh; 
+                        display: flex; 
+                        flex-direction: column;
+                        border-radius: 12px;
+                        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                        overflow: hidden;
+                        background: var(--bg-color, #fff);
+                    }
+                    .dark-mode .library-modal {
+                        background: #2d2d2d;
+                        border: 1px solid #444;
+                    }
+                    
+                    .modal-header {
+                        padding: 16px 24px;
+                        border-bottom: 1px solid #eee;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        background: rgba(0,0,0,0.02);
+                    }
+                    .dark-mode .modal-header {
+                        border-bottom-color: #444;
+                        background: rgba(255,255,255,0.02);
+                    }
+                    .modal-header h3 { margin: 0; font-size: 18px; font-weight: 600; }
+                    
+                    .modal-body {
+                        overflow-y: auto;
+                        flex: 1;
+                        padding: 10px 0;
+                    }
+                    
+                    /* 自定义滚动条 */
+                    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+                    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                    .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius: 3px; }
+                    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background-color: rgba(0,0,0,0.3); }
+                    .dark-mode .custom-scrollbar::-webkit-scrollbar-thumb { background-color: rgba(255,255,255,0.2); }
+                    
+                    .file-tree { display: flex; flex-direction: column; }
+                    .tree-item { cursor: pointer; user-select: none; }
+                    
+                    .tree-content { 
+                        display: flex; 
+                        align-items: center; 
+                        padding: 10px 16px 10px 0; /* Left padding is inline */
+                        transition: background-color 0.15s;
+                        border-left: 3px solid transparent;
+                    }
+                    .tree-content:hover { 
+                        background: rgba(0,0,0,0.04); 
+                        border-left-color: var(--primary-color, #3498db);
+                    }
+                    .dark-mode .tree-content:hover { background: rgba(255,255,255,0.05); }
+                    
+                    .tree-icon { margin-right: 12px; font-size: 20px; width: 24px; text-align: center; }
+                    .tree-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+                    .tree-meta { font-size: 12px; color: #999; margin-left: 12px; min-width: 60px; text-align: right; }
+                    
+                    .directory .tree-icon { color: #f39c12; }
+                    .file .tree-icon { color: #3498db; }
+                    .dark-mode .file .tree-icon { color: #5dade2; }
                 `;
                 modal.appendChild(style);
 
                 document.body.appendChild(modal);
 
-                // 绑定点击事件
-                modal.querySelectorAll('.book-item').forEach(item => {
-                    item.addEventListener('click', () => {
-                        const path = item.getAttribute('data-path');
-                        const name = item.getAttribute('data-name');
-                        loadServerBook(path, name);
-                        document.body.removeChild(modal);
+                // 关闭函数
+                const closeModal = () => {
+                    document.body.style.overflow = ''; // 恢复滚动
+                    if (modal.parentNode) modal.parentNode.removeChild(modal);
+                };
+
+                // 绑定文件夹点击事件（展开/折叠）
+                modal.querySelectorAll('.directory > .tree-content').forEach(header => {
+                    header.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const parent = header.parentElement;
+                        const childrenContainer = parent.querySelector('.tree-children');
+                        const icon = header.querySelector('.tree-icon');
+
+                        if (childrenContainer.style.display === 'none') {
+                            childrenContainer.style.display = 'block';
+                            icon.textContent = '📂'; // 打开状态图标
+                            parent.classList.remove('collapsed');
+                            parent.classList.add('expanded');
+                        } else {
+                            childrenContainer.style.display = 'none';
+                            icon.textContent = '📁'; // 关闭状态图标
+                            parent.classList.remove('expanded');
+                            parent.classList.add('collapsed');
+                        }
                     });
                 });
 
-                modal.querySelector('.modal-close').addEventListener('click', () => {
-                    document.body.removeChild(modal);
+                // 绑定文件点击事件
+                modal.querySelectorAll('.file').forEach(item => {
+                    item.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const path = item.getAttribute('data-path');
+                        const name = item.getAttribute('data-name');
+                        loadServerBook(path, name);
+                        closeModal();
+                    });
                 });
+
+                modal.querySelector('.modal-close').addEventListener('click', closeModal);
 
                 // 点击遮罩关闭
                 modal.addEventListener('click', (e) => {
-                    if (e.target === modal) document.body.removeChild(modal);
+                    if (e.target === modal) closeModal();
                 });
 
             } catch (error) {

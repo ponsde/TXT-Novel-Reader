@@ -13,7 +13,7 @@ async function loadRandomState() {
     try {
         const exePath = app.getPath('exe');
         const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
-        
+
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
             const state = JSON.parse(stateData);
@@ -34,13 +34,13 @@ async function saveRandomState() {
     try {
         const exePath = app.getPath('exe');
         const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
-        
+
         const state = {
             randomizedBooks,
             allAvailableBooks,
             timestamp: new Date().toISOString()
         };
-        
+
         await fsPromises.writeFile(stateFilePath, JSON.stringify(state, null, 4));
         console.log('已保存随机状态');
     } catch (error) {
@@ -62,12 +62,12 @@ function createWindow() {
     win.loadFile('index.html').catch(err => {
         console.error('加载 index.html 失败:', err);
     });
-    
+
     // 添加错误处理
     win.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
         console.error('页面加载失败:', errorCode, errorDescription);
     });
-    
+
     // 注释掉开发者工具，以避免生产环境中显示
     // win.webContents.openDevTools();
 }
@@ -119,32 +119,62 @@ ipcMain.handle('read-file', async (event, filePath) => {
     }
 });
 
-// 修改文件搜索处理
+// 修改文件搜索处理（优化版：并行处理 + 忽略目录）
 ipcMain.handle('search-file', async (event, baseDir, fileName) => {
-    async function searchInDir(dir) {
+    // 忽略列表
+    const IGNORED_DIRS = new Set([
+        'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', 'coverage',
+        '$RECYCLE.BIN', 'System Volume Information', 'Windows', 'Program Files', 'Program Files (x86)'
+    ]);
+
+    // 最大递归深度
+    const MAX_DEPTH = 10;
+
+    // 用于控制提前结束
+    let foundPath = null;
+
+    async function searchInDir(dir, depth = 0) {
+        if (foundPath) return foundPath; // 如果已经找到了，直接返回
+        if (depth > MAX_DEPTH) return null;
+
         try {
             const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-            
+
+            // 检查当前目录下的文件
             for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                    try {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } catch (error) {
-                        console.error(`搜索目录 ${fullPath} 时出错:`, error);
-                        continue;
-                    }
-                } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                    return fullPath;
+                if (foundPath) return foundPath;
+
+                if (entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase()) {
+                    foundPath = path.join(dir, entry.name);
+                    return foundPath;
                 }
             }
+
+            // 收集子目录
+            const subDirs = [];
+            for (const entry of entries) {
+                if (entry.isDirectory()) {
+                    if (!IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+                        subDirs.push(path.join(dir, entry.name));
+                    }
+                }
+            }
+
+            // 并行扫描子目录
+            if (subDirs.length > 0) {
+                // 使用 Promise.all 并行执行，但只要有一个找到就返回
+                // 注意：这里没有使用 Promise.any 因为 Node 版本可能不支持，且我们需要自定义逻辑
+                const promises = subDirs.map(subDir => searchInDir(subDir, depth + 1));
+                await Promise.all(promises);
+            }
+
+            return foundPath;
         } catch (error) {
-            console.error(`读取目录 ${dir} 时出错:`, error);
+            // 忽略错误
+            return null;
         }
-        return null;
     }
-    
+
     try {
         console.log('开始搜索文件:', fileName, '在目录:', baseDir);
         const result = await searchInDir(baseDir);
@@ -162,12 +192,13 @@ ipcMain.handle('load-config', async () => {
         // 使用 app.getPath('exe') 获取程序所在目录
         const exePath = app.getPath('exe');
         const configPath = path.join(path.dirname(exePath), 'config.json');
-        
+
         // 如果配置文件不存在，创建默认配置
         if (!fs.existsSync(configPath)) {
+            const documentsPath = app.getPath('documents');
             const defaultConfig = {
-                baseDir: 'E:\\18\\utf',
-                searchDirs: ['E:\\18\\utf'],  // 默认搜索目录
+                baseDir: documentsPath,
+                searchDirs: [documentsPath],  // 默认搜索目录
                 wordsPerPage: 4000,
                 maxHistory: 50,
                 fontSize: 18,
@@ -177,24 +208,25 @@ ipcMain.handle('load-config', async () => {
             await fsPromises.writeFile(configPath, JSON.stringify(defaultConfig, null, 4));
             return defaultConfig;
         }
-        
+
         const configData = await fsPromises.readFile(configPath, 'utf8');
         const config = JSON.parse(configData);
-        
+
         // 如果没有searchDirs字段，添加一个默认值
         if (!config.searchDirs) {
             config.searchDirs = [config.baseDir];
             // 保存更新后的配置
             await fsPromises.writeFile(configPath, JSON.stringify(config, null, 4));
         }
-        
+
         return config;
     } catch (error) {
         console.error('读取配置文件失败:', error);
         // 返回默认配置
+        const documentsPath = app.getPath('documents');
         return {
-            baseDir: 'E:\\18\\utf',
-            searchDirs: ['E:\\18\\utf'],  // 默认搜索目录
+            baseDir: documentsPath,
+            searchDirs: [documentsPath],  // 默认搜索目录
             wordsPerPage: 4000,
             maxHistory: 50,
             fontSize: 18,
@@ -212,45 +244,45 @@ ipcMain.handle('get-random-file', async (event, baseDir) => {
         if (txtFiles.length === 0) {
             return null;
         }
-        
+
         // 检查是否所有书籍列表已更新
         const currentBookSet = JSON.stringify(txtFiles.sort());
         const previousBookSet = JSON.stringify(allAvailableBooks.sort());
-        
+
         // 如果书籍列表发生变化或首次运行，重置已随机列表
         if (currentBookSet !== previousBookSet) {
             console.log('书籍列表已更新，重置随机状态');
             allAvailableBooks = [...txtFiles];
             randomizedBooks = [];
         }
-        
+
         // 如果所有书籍都已经随机过一遍，重置已随机列表
         if (randomizedBooks.length >= txtFiles.length) {
             console.log('所有书籍都已随机过一遍，重置随机状态');
             randomizedBooks = [];
         }
-        
+
         // 过滤出未随机过的书籍
         const availableBooks = txtFiles.filter(book => !randomizedBooks.includes(book));
-        
+
         // 如果没有可用书籍（理论上不应该发生），重置并使用所有书籍
         if (availableBooks.length === 0) {
             console.log('没有可用书籍，重置随机状态');
             randomizedBooks = [];
             availableBooks = [...txtFiles];
         }
-        
+
         // 从可用书籍中随机选择一本
         const randomIndex = Math.floor(Math.random() * availableBooks.length);
         const selectedBook = availableBooks[randomIndex];
-        
+
         // 将选中的书籍添加到已随机列表
         randomizedBooks.push(selectedBook);
         console.log(`已随机过 ${randomizedBooks.length}/${txtFiles.length} 本书`);
-        
+
         // 保存随机状态
         await saveRandomState();
-        
+
         return selectedBook;
     } catch (error) {
         console.error('获取随机文件失败:', error);
@@ -260,51 +292,153 @@ ipcMain.handle('get-random-file', async (event, baseDir) => {
 
 // 选择目录
 ipcMain.handle('select-directory', async () => {
-  try {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-      title: '选择小说文件夹路径'
-    });
-    
-    if (result.canceled) {
-      return null;
+    try {
+        const result = await dialog.showOpenDialog({
+            properties: ['openDirectory'],
+            title: '选择小说文件夹路径'
+        });
+
+        if (result.canceled) {
+            return null;
+        }
+
+        return result.filePaths[0];
+    } catch (error) {
+        console.error('选择目录失败:', error);
+        return null;
     }
-    
-    return result.filePaths[0];
-  } catch (error) {
-    console.error('选择目录失败:', error);
-    return null;
-  }
 });
 
-// 递归获取所有 TXT 文件
+// 递归获取所有 TXT 文件（优化版：并行处理 + 忽略目录）
 async function getAllTxtFiles(dir) {
     const files = [];
-    
-    async function scan(directory) {
-        const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-        
-        for (const entry of entries) {
-            const fullPath = path.join(directory, entry.name);
-            
-            if (entry.isDirectory()) {
-                await scan(fullPath);
-            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
-                files.push(fullPath);
+    // 忽略列表
+    const IGNORED_DIRS = new Set([
+        'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', 'coverage',
+        '$RECYCLE.BIN', 'System Volume Information', 'Windows', 'Program Files', 'Program Files (x86)'
+    ]);
+
+    // 最大递归深度，防止过深
+    const MAX_DEPTH = 10;
+
+    async function scan(directory, depth = 0) {
+        if (depth > MAX_DEPTH) return;
+
+        try {
+            const entries = await fsPromises.readdir(directory, { withFileTypes: true });
+
+            // 分离文件和目录，以便并行处理
+            const subDirs = [];
+
+            for (const entry of entries) {
+                const fullPath = path.join(directory, entry.name);
+
+                if (entry.isDirectory()) {
+                    if (!IGNORED_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+                        subDirs.push(fullPath);
+                    }
+                } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+                    files.push(fullPath);
+                }
             }
+
+            // 并行扫描子目录
+            if (subDirs.length > 0) {
+                await Promise.all(subDirs.map(subDir => scan(subDir, depth + 1).catch(err => {
+                    // 忽略访问权限等错误，继续扫描其他目录
+                    // console.warn(`无法扫描目录 ${subDir}:`, err.message);
+                })));
+            }
+        } catch (error) {
+            // 忽略读取目录错误（如权限不足）
+            // console.warn(`读取目录 ${directory} 失败:`, error.message);
         }
     }
-    
+
     await scan(dir);
     return files;
+}// 辅助函数：获取目录树结构
+async function getDirectoryTree(dir, relativePath = '') {
+    const items = [];
+    try {
+        const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            const entryRelativePath = path.join(relativePath, entry.name);
+
+            if (entry.isDirectory()) {
+                // 忽略隐藏目录和系统目录
+                if (entry.name.startsWith('.') || entry.name === '$RECYCLE.BIN' || entry.name === 'System Volume Information') continue;
+
+                // 递归获取子目录
+                const children = await getDirectoryTree(fullPath, entryRelativePath);
+                // 只有当目录不为空时才添加
+                if (children.length > 0) {
+                    items.push({
+                        name: entry.name,
+                        path: fullPath,
+                        relativePath: entryRelativePath,
+                        type: 'directory',
+                        children: children
+                    });
+                }
+            } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+                items.push({
+                    name: entry.name,
+                    path: fullPath,
+                    relativePath: entryRelativePath,
+                    type: 'file',
+                    size: fs.statSync(fullPath).size
+                });
+            }
+        }
+
+        // 排序：文件夹在前，文件在后
+        items.sort((a, b) => {
+            if (a.type === b.type) return a.name.localeCompare(b.name);
+            return a.type === 'directory' ? -1 : 1;
+        });
+
+    } catch (e) {
+        console.error(`无法扫描目录 ${dir}:`, e);
+    }
+    return items;
 }
+
+// 添加获取文件列表的 IPC 处理
+ipcMain.handle('get-file-list', async () => {
+    try {
+        // 获取配置
+        const exePath = app.getPath('exe');
+        const configPath = path.join(path.dirname(exePath), 'config.json');
+        let libraryDir = '';
+
+        if (fs.existsSync(configPath)) {
+            const configData = await fsPromises.readFile(configPath, 'utf8');
+            const config = JSON.parse(configData);
+            // 优先使用 libraryDir，如果没有则使用 baseDir
+            libraryDir = config.libraryDir || config.baseDir;
+        }
+
+        // 如果没有配置路径，使用文档目录
+        if (!libraryDir) {
+            libraryDir = app.getPath('documents');
+        }
+
+        console.log('正在获取书库列表，路径:', libraryDir);
+        return await getDirectoryTree(libraryDir);
+    } catch (error) {
+        console.error('获取文件列表失败:', error);
+        return [];
+    }
+});
 
 // 添加保存配置的处理函数
 ipcMain.handle('save-config', async (event, newSettings) => {
     try {
         const exePath = app.getPath('exe');
         const configPath = path.join(path.dirname(exePath), 'config.json');
-        
+
         // 读取现有配置
         let config = {};
         try {
@@ -312,8 +446,9 @@ ipcMain.handle('save-config', async (event, newSettings) => {
             config = JSON.parse(configData);
         } catch (error) {
             // 如果文件不存在或无法解析，使用默认配置
+            const documentsPath = app.getPath('documents');
             config = {
-                baseDir: 'E:\\18\\utf',
+                baseDir: documentsPath,
                 wordsPerPage: 4000,
                 maxHistory: 10,
                 fontSize: 18,
@@ -321,10 +456,10 @@ ipcMain.handle('save-config', async (event, newSettings) => {
                 theme: 'light'
             };
         }
-        
+
         // 更新配置
         Object.assign(config, newSettings);
-        
+
         // 保存配置
         await fsPromises.writeFile(configPath, JSON.stringify(config, null, 4));
         return true;
@@ -351,7 +486,7 @@ ipcMain.handle('find-and-open-file-location', async (event, searchPaths, fileNam
                 // 继续搜索下一个目录
             }
         }
-        
+
         // 所有路径都搜索完毕，未找到文件
         return { success: false };
     } catch (error) {
@@ -365,7 +500,7 @@ async function findFileInDirectory(dir, fileName) {
     async function searchInDir(directory) {
         try {
             const entries = await fsPromises.readdir(directory, { withFileTypes: true });
-            
+
             for (const entry of entries) {
                 const fullPath = path.join(directory, entry.name);
                 if (entry.isDirectory()) {
@@ -385,6 +520,6 @@ async function findFileInDirectory(dir, fileName) {
         }
         return null;
     }
-    
+
     return await searchInDir(dir);
 }
