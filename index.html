@@ -2038,12 +2038,7 @@
 
         // 在页面加载时显示历史记录并加载配置
         document.addEventListener('DOMContentLoaded', async function () {
-            // 先加载配置
-            await loadConfig();
-            // 应用存储的字体设置
-            applyStoredSettings();
-            // 然后更新历史记录显示
-            updateHistoryDisplay();
+            // 立即绑定事件监听，防止配置加载阻塞导致按钮无响应
 
             // 添加随机按钮的点击事件监听
             const randomButton = document.getElementById('random-book-btn');
@@ -2101,6 +2096,14 @@
                     }
                 });
             }
+
+            // 应用存储的字体设置
+            applyStoredSettings();
+            // 更新历史记录显示
+            updateHistoryDisplay();
+
+            // 最后加载配置（异步执行，不阻塞界面）
+            loadConfig().catch(err => console.error('配置加载失败:', err));
         });
 
         // 设置书库路径
@@ -2348,7 +2351,7 @@
 
                 // 如果配置中禁用了某些功能，可以隐藏对应按钮
                 if (config.hideRandomButton) {
-                    const randomButton = document.querySelector('.setting-item[onclick="loadRandomBook()"]');
+                    const randomButton = document.getElementById('random-book-btn');
                     if (randomButton) {
                         randomButton.style.display = 'none';
                     }
