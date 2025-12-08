@@ -207,9 +207,15 @@
     </div>
 
     <div class="reader-container">
-        <!-- 移动端顶部栏 (仅显示标题) -->
-        <div class="mobile-top-bar controls-hidden" id="mobile-top-bar">
+        <!-- 移动端顶部栏 -->
+        <div class="mobile-top-bar" id="mobile-top-bar">
+            <div class="nav-btn" onclick="toggleMobileSidebar()">
+                <i class="icon">≡</i>
+            </div>
             <div class="nav-title" id="mobile-book-title">优雅阅读器</div>
+            <div class="nav-btn" style="visibility: hidden;">
+                <i class="icon">≡</i>
+            </div>
         </div>
 
         <div class="reader-header">
@@ -218,6 +224,11 @@
 
         <div class="reader-main">
             <div class="reader-content" id="content">
+                <div class="home-actions mobile-visible"
+                    style="text-align: center; margin-bottom: 20px; display: none;">
+                    <button onclick="document.getElementById('file-input').click()"
+                        style="padding: 10px 20px; font-size: 16px; background: #4CAF50; color: white; border: none; border-radius: 5px;">打开小说</button>
+                </div>
                 <p>请选择一个 TXT 文件开始阅读</p>
                 <p style="color: #666; font-size: 14px;">提示：为获得最佳阅读体验，建议使用 UTF-8 编码的 TXT 文件</p>
                 <p style="color: #666; font-size: 14px;">支持多种编码格式：UTF-8、GBK、Big5、Shift-JIS、EUC-KR、UTF-16等</p>
@@ -2329,13 +2340,11 @@
                         const sidebar = document.querySelector('.reader-sidebar');
                         const topBar = document.getElementById('mobile-top-bar');
 
-                        sidebar.classList.toggle('controls-hidden');
-                        if (topBar) {
-                            topBar.classList.toggle('controls-hidden');
-                        }
+                        // 切换侧边栏显示状态
+                        sidebar.classList.toggle('active');
 
-                        // 同时切换目录和设置面板的显示状态
-                        if (sidebar.classList.contains('controls-hidden')) {
+                        // 如果侧边栏隐藏了，也隐藏目录和设置
+                        if (!sidebar.classList.contains('active')) {
                             document.getElementById('chapter-list').classList.add('hidden');
                             document.getElementById('font-settings-panel').classList.add('hidden');
                         }
@@ -2947,6 +2956,12 @@
                 alert('加载随机书籍失败: ' + error.message);
                 document.getElementById('loading-overlay').style.display = 'none';
             }
+        }
+
+        // 切换移动端侧边栏
+        function toggleMobileSidebar() {
+            const sidebar = document.querySelector('.reader-sidebar');
+            sidebar.classList.toggle('active');
         }
 
         // 添加打开文件所在位置的函数

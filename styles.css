@@ -734,25 +734,14 @@ body.dark-mode .setting-group span {
         overflow-y: auto;
     }
 
-    /* Visible state (when controls-hidden is REMOVED) */
-    /* Wait, the logic is inverted. controls-hidden means hidden. */
-    .reader-sidebar.controls-hidden {
-        transform: translateX(100%);
-    }
-
-    /* When visible, we need a rule to override if necessary, but default is visible in CSS if no class. 
-       However, we want it hidden by default. 
-       The JS adds 'controls-hidden' on load. So default is hidden.
-       When tapped, 'controls-hidden' is removed -> transform: none (default for div?)
-       No, we need to set the default transform to none in the base class?
-       Actually, let's set the base state to visible (transform: none) and .controls-hidden to hidden.
-    */
-    .reader-sidebar {
+    /* Visible state (when active class is added) */
+    .reader-sidebar.active {
         transform: translateX(0);
     }
 
+    /* Remove old controls-hidden logic */
     .reader-sidebar.controls-hidden {
-        transform: translateX(100%);
+        /* No longer used */
     }
 
     .setting-item {
