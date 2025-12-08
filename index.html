@@ -211,10 +211,30 @@
         let baseDir = ''; // 随机阅读的路径
         let searchDirs = []; // 历史记录搜索路径列表
         let wordsPerPage = 4000;
+        // 全局预览模式标志
+        window.isPreviewMode = false;
 
         document.getElementById('file-input').addEventListener('change', async function (e) {
+            // 立即显示加载遮罩
+            document.getElementById('loading-overlay').style.display = 'flex';
+            document.querySelector('.loading-message').textContent = '准备加载文件...';
+
+            // 给UI一点渲染时间
+            await new Promise(resolve => requestAnimationFrame(resolve));
+
             const file = e.target.files[0];
-            if (!file) return;
+            if (!file) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                return;
+            }
+
+            // 如果当前已经打开了该文件，则不重新加载
+            if (currentFileName === file.name) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                showNotification('该书籍已打开');
+                e.target.value = ''; // 重置 input
+                return;
+            }
 
             // 自动添加文件所在目录到搜索路径
             if (file.path && pathModule) {
@@ -236,131 +256,29 @@
             }
 
             currentFileName = file.name;
-            document.getElementById('loading-overlay').style.display = 'flex';
-            document.querySelector('.loading-message').textContent = '准备加载文件...';
+            window.isPreviewMode = false;
 
-            // 使用分块读取方式处理大文件
-            const CHUNK_SIZE = 1024 * 1024 * 4; // 4MB 分块大小
-            let fileSize = file.size;
-            let offset = 0;
-            let fileReader = new FileReader();
-            let chunks = [];
-            let loadedSize = 0;
-
-            // 创建一个 Web Worker 来处理文件解码，避免阻塞主线程
-            const fileWorker = createFileWorker();
-
-            fileReader.onload = function (e) {
-                if (e.target.result) {
-                    chunks.push(e.target.result);
-                    loadedSize += e.target.result.byteLength;
-
-                    // 更新加载进度
-                    const progress = Math.round((loadedSize / fileSize) * 100);
-                    document.querySelector('.loading-message').textContent = `加载中...${progress}%`;
-
-                    // 继续读取下一块
-                    offset += CHUNK_SIZE;
-                    if (offset < fileSize) {
-                        readNextChunk();
-                    } else {
-                        // 所有块都已读取完成，开始处理文件内容
-                        document.querySelector('.loading-message').textContent = '正在处理文件内容...';
-
-                        // 合并所有块
-                        const completeBuffer = mergeArrayBuffers(chunks);
-
-                        // 使用 Worker 处理文件解码，并使用 Transferable Objects 转移所有权，避免拷贝
-                        fileWorker.postMessage({
-                            buffer: completeBuffer,
-                            fileName: file.name
-                        }, [completeBuffer]);
-                    }
+            // 直接加载完整文件
+            const reader = new FileReader();
+            reader.onload = async function (e) {
+                try {
+                    await processFileContent(e.target.result, file.name);
+                } catch (err) {
+                    console.error('加载失败:', err);
+                    showNotification('加载失败: ' + err);
                 }
             };
+            reader.readAsArrayBuffer(file);
 
-            fileReader.onerror = function (e) {
-                console.error("文件读取错误:", e);
-                alert("文件读取失败，请检查文件格式和编码。");
-                document.getElementById('loading-overlay').style.display = 'none';
-            };
-
-            // 处理 Worker 返回的结果
-            fileWorker.onmessage = function (e) {
-                const result = e.data;
-                if (result.error) {
-                    console.error("文件处理错误:", result.error);
-                    alert("文件处理失败: " + result.error);
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    return;
-                }
-
-                const text = result.text;
-                const encoding = result.encoding || '未知';
-
-                // 显示检测到的编码
-                showNotification(`检测到文件编码: ${encoding}`);
-
-                // 检查是否有保存的进度，从多书籍进度存储中获取
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-
-                // 优先使用 window.pendingPosition (来自历史记录点击)
-                if (window.pendingPosition !== undefined) {
-                    currentPage = window.pendingPosition;
-                    currentChapter = window.pendingChapter || 0;
-                    // 清理临时变量
-                    window.pendingPosition = undefined;
-                    window.pendingChapter = undefined;
-                } else if (allBookProgress[currentFileName]) {
-                    currentPage = allBookProgress[currentFileName].page;
-                    currentChapter = allBookProgress[currentFileName].chapter;
-                } else {
-                    currentPage = 0;
-                    currentChapter = 0;
-                }
-
-                document.getElementById('book-title').textContent = file.name.replace('.txt', '');
-                document.querySelector('.loading-message').textContent = '正在分析章节结构...';
-
-                // 确保内容区域可见
-                document.getElementById('content').style.display = 'block';
-
-                // 检测章节
-                detectChapters(text);
-
-                // 添加到历史记录
-                addToHistory({
-                    fileName: currentFileName,
-                    date: new Date().toLocaleString(),
-                    lastPosition: currentPage,
-                    chapter: currentChapter
-                });
-            };
-
-            // 开始读取第一块
-            function readNextChunk() {
-                let slice = file.slice(offset, offset + CHUNK_SIZE);
-                fileReader.readAsArrayBuffer(slice);
-            }
-
-            // 合并 ArrayBuffer 数组
-            function mergeArrayBuffers(buffers) {
-                let totalLength = buffers.reduce((acc, buffer) => acc + buffer.byteLength, 0);
-                let result = new Uint8Array(totalLength);
-                let offset = 0;
-                buffers.forEach(buffer => {
-                    result.set(new Uint8Array(buffer), offset);
-                    offset += buffer.byteLength;
-                });
-                return result.buffer;
-            }
-
-            // 开始读取文件
-            readNextChunk();
+            // 清空 input 值，允许重复选择同一文件
+            e.target.value = '';
         });
 
-        function detectChapters(text) {
-            document.querySelector('.loading-message').textContent = '正在分析章节结构...';
+        function detectChapters(text, options = {}) {
+            // 只有在显示遮罩时才更新文本
+            if (document.getElementById('loading-overlay').style.display !== 'none') {
+                document.querySelector('.loading-message').textContent = '正在分析章节结构...';
+            }
 
             // 使用 Web Worker 进行章节检测，避免阻塞主线程
             const chapterWorker = createChapterWorker();
@@ -395,6 +313,10 @@
                     // 计算总页数
                     const totalPages = currentContent.length;
 
+                    // 如果遮罩层是显示的，说明用户正在等待加载，此时不应视为后台更新
+                    const isOverlayVisible = document.getElementById('loading-overlay').style.display !== 'none';
+                    const effectiveIsBackground = options.isBackground && !isOverlayVisible;
+
                     // 检查是否有保存的进度
                     const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                     if (allBookProgress[currentFileName]) {
@@ -404,36 +326,134 @@
                         if (currentPage >= totalPages) {
                             currentPage = 0;
                         }
-                    } else {
+                    } else if (!effectiveIsBackground) {
+                        // 只有在非后台更新时才重置页码
                         currentPage = 0;
                     }
+                    // 如果是后台更新且没有保存进度（例如从预览模式升级），保持当前 currentPage 不变
 
                     // 显示内容
-                    showTextPage(currentPage, totalPages);
+                    if (pageMode === 'scroll') {
+                        showAllContent({ isBackground: effectiveIsBackground });
+                    } else {
+                        showTextPage(currentPage, totalPages, {
+                            ...options,
+                            isBackground: effectiveIsBackground
+                        });
+                    }
 
                     // 确保控件可见
                     document.querySelector('.navigation-buttons').style.display = 'flex';
                     document.querySelector('.progress-indicator').style.display = 'block';
+
+                    // 对于无章节模式，通常不需要等待特定章节，直接隐藏遮罩
+                    if (isOverlayVisible) {
+                        document.querySelector('.loading-message').textContent = '加载完成';
+                        document.getElementById('loading-overlay').style.display = 'none';
+                    }
                 } else if (chapters.length > 0) {
                     updateChapterList();
                     // 显示翻页按钮
                     document.querySelector('.navigation-buttons').style.display = 'flex';
                     document.querySelector('.progress-indicator').style.display = 'block';
 
+                    // 如果遮罩层是显示的，说明用户正在等待加载，此时不应视为后台更新（需要强制刷新/滚动）
+                    const isOverlayVisible = document.getElementById('loading-overlay').style.display !== 'none';
+                    const effectiveIsBackground = options.isBackground && !isOverlayVisible;
+
                     // 检查是否有保存的进度，从多书籍进度存储中获取
                     const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
                     if (allBookProgress[currentFileName]) {
-                        showPage(allBookProgress[currentFileName].page || 0, allBookProgress[currentFileName].chapter || 0);
+                        let targetChapter = allBookProgress[currentFileName].chapter || 0;
+                        let targetPage = allBookProgress[currentFileName].page || 0;
+                        let waitingForContent = false;
+
+                        // 如果是预览模式，且目标章节不存在，则显示第一章，但不覆盖进度
+                        if (options.isPreview && targetChapter >= chapters.length) {
+                            console.log('预览模式：目标章节超出范围，暂时显示第一章');
+                            targetChapter = 0;
+                            targetPage = 0;
+                            waitingForContent = true;
+                            window.waitingForHistory = true; // 标记正在等待历史记录
+                        }
+
+                        // 如果是后台更新，且之前没有在等待历史记录（说明用户可能已经开始阅读了），则优先保持当前位置
+                        // 除非当前位置是0（可能是刚打开），而历史记录不是0
+                        if (effectiveIsBackground && !window.waitingForHistory) {
+                            // 使用当前内存中的位置，而不是历史记录
+                            // 注意：如果用户在预览期间翻页了，currentPage/currentChapter 应该已经更新
+                            // 如果是滚动模式，showAllContent 会处理滚动位置恢复
+                            console.log('后台更新：用户已在阅读，保持当前位置');
+
+                            if (pageMode === 'scroll') {
+                                showAllContent({ isBackground: true });
+                            } else {
+                                showPage(currentPage, currentChapter, {
+                                    ...options,
+                                    isBackground: true
+                                });
+                            }
+                        } else {
+                            // 正常加载历史记录，或者正在等待历史记录加载
+                            if (pageMode === 'scroll') {
+                                showAllContent({ isBackground: effectiveIsBackground });
+                            } else {
+                                showPage(targetPage, targetChapter, {
+                                    ...options,
+                                    isBackground: effectiveIsBackground
+                                });
+                            }
+                        }
+
+                        // 处理遮罩层逻辑
+                        if (isOverlayVisible) {
+                            if (waitingForContent) {
+                                // 如果还在等待内容（目标章节未加载），保持遮罩层显示
+                                document.querySelector('.loading-message').textContent = '正在跳转到历史位置...';
+                            } else {
+                                // 内容已就绪，隐藏遮罩层
+                                document.querySelector('.loading-message').textContent = '加载完成';
+                                document.getElementById('loading-overlay').style.display = 'none';
+                            }
+                        }
+
+                        // 如果是后台更新且完成了等待，重置标志
+                        if (effectiveIsBackground) {
+                            window.waitingForHistory = false;
+                        }
                     } else {
-                        jumpToChapter(0);
+                        // 没有历史记录
+                        if (effectiveIsBackground) {
+                            // 如果是后台更新（例如从预览模式升级），保持当前位置
+                            if (pageMode === 'scroll') {
+                                showAllContent({ isBackground: true });
+                            } else {
+                                showPage(currentPage, currentChapter, {
+                                    ...options,
+                                    isBackground: true
+                                });
+                            }
+                        } else {
+                            // 首次加载，跳转到第一章
+                            if (pageMode === 'scroll') {
+                                showAllContent();
+                            } else {
+                                jumpToChapter(0);
+                            }
+                        }
+
+                        // 直接隐藏遮罩
+                        if (document.getElementById('loading-overlay').style.display !== 'none') {
+                            document.querySelector('.loading-message').textContent = '加载完成';
+                            document.getElementById('loading-overlay').style.display = 'none';
+                        }
                     }
                 }
 
-                document.querySelector('.loading-message').textContent = '加载完成';
-                document.getElementById('loading-overlay').style.display = 'none';
-
-                // 保存当前文件的进度
-                saveProgress();
+                // 保存当前文件的进度（预览模式和后台加载时不保存）
+                if (!options.isPreview && !options.isBackground) {
+                    saveProgress();
+                }
 
                 // 更新进度条
                 updateProgressBar();
@@ -462,6 +482,11 @@
                     let successEncoding = '';
                     
                     try {
+                        // 1. 提取样本进行编码检测 (前 64KB)
+                        // 只对样本进行多重编码测试，避免对大文件重复全量解码
+                        const sampleSize = Math.min(arrayBuffer.byteLength, 64 * 1024);
+                        const sampleBuffer = arrayBuffer.slice(0, sampleSize);
+
                         // 尝试不同的编码 - 优先次序很重要
                         const encodings = [
                             'utf-8', 
@@ -493,123 +518,100 @@
                             'windows-1258'  // 越南语
                         ];
                         
-                        // 尝试自动检测BOM标记
+                        let detectedEncoding = null;
+
+                        // 尝试自动检测BOM标记 (直接检查原始 buffer)
                         const byteArray = new Uint8Array(arrayBuffer.slice(0, 4));
                         if (byteArray[0] === 0xEF && byteArray[1] === 0xBB && byteArray[2] === 0xBF) {
-                            // UTF-8 with BOM
-                            const decoder = new TextDecoder('utf-8');
-                            text = decoder.decode(arrayBuffer);
+                            detectedEncoding = 'utf-8';
                             successEncoding = 'utf-8 (BOM)';
                         } else if (byteArray[0] === 0xFE && byteArray[1] === 0xFF) {
-                            // UTF-16 BE BOM
-                            const decoder = new TextDecoder('utf-16be');
-                            text = decoder.decode(arrayBuffer);
+                            detectedEncoding = 'utf-16be';
                             successEncoding = 'utf-16be (BOM)';
                         } else if (byteArray[0] === 0xFF && byteArray[1] === 0xFE) {
-                            // UTF-16 LE BOM
-                            const decoder = new TextDecoder('utf-16le');
-                            text = decoder.decode(arrayBuffer);
+                            detectedEncoding = 'utf-16le';
                             successEncoding = 'utf-16le (BOM)';
                         } else if (byteArray[0] === 0x00 && byteArray[1] === 0x00 && byteArray[2] === 0xFE && byteArray[3] === 0xFF) {
-                            // UTF-32 BE BOM
-                            try {
-                                const decoder = new TextDecoder('utf-32be');
-                                text = decoder.decode(arrayBuffer);
-                                successEncoding = 'utf-32be (BOM)';
-                            } catch (err) {
-                                // 如果浏览器不支持UTF-32，尝试其他编码
-                            }
+                            detectedEncoding = 'utf-32be';
+                            successEncoding = 'utf-32be (BOM)';
                         } else if (byteArray[0] === 0xFF && byteArray[1] === 0xFE && byteArray[2] === 0x00 && byteArray[3] === 0x00) {
-                            // UTF-32 LE BOM
-                            try {
-                                const decoder = new TextDecoder('utf-32le');
-                                text = decoder.decode(arrayBuffer);
-                                successEncoding = 'utf-32le (BOM)';
-                            } catch (err) {
-                                // 如果浏览器不支持UTF-32，尝试其他编码
-                            }
-                        } else {
-                            // 没有BOM，尝试各种编码
+                            detectedEncoding = 'utf-32le';
+                            successEncoding = 'utf-32le (BOM)';
+                        } 
+                        
+                        // 如果没有BOM，使用样本检测编码
+                        if (!detectedEncoding) {
                             for (let encoding of encodings) {
                                 try {
+                                    let sampleText;
                                     if (encoding === 'gbk' || encoding === 'gb18030' || encoding === 'hz-gb-2312') {
                                         // 使用GBK.js库处理中文编码
-                                        const gbkBytes = new Uint8Array(arrayBuffer);
+                                        const gbkBytes = new Uint8Array(sampleBuffer);
                                         try {
-                                            text = GBK.decode(gbkBytes);
-                                            if (text && !containsUnreadableChars(text)) {
-                                                successEncoding = encoding;
-                                                break;
-                                            }
-                                        } catch (err) {
-                                            // 解码失败，继续尝试其他编码
-                                            continue;
-                                        }
+                                            sampleText = GBK.decode(gbkBytes);
+                                        } catch (err) { continue; }
                                     } else {
                                         const decoder = new TextDecoder(encoding);
-                                        text = decoder.decode(arrayBuffer);
-                                        
-                                        // 检查解码结果是否包含太多无法读取的字符
-                                        if (text && !containsUnreadableChars(text)) {
-                                            successEncoding = encoding;
-                                            break;
-                                        }
+                                        sampleText = decoder.decode(sampleBuffer);
+                                    }
+                                    
+                                    if (sampleText && !containsUnreadableChars(sampleText)) {
+                                        detectedEncoding = encoding;
+                                        break;
                                     }
                                 } catch (error) {
-                                    // 尝试下一个编码
                                     continue;
                                 }
                             }
                         }
                         
                         // 如果所有编码都失败，使用系统默认编码
-                        if (!text) {
-                            const defaultDecoder = new TextDecoder();
-                            text = defaultDecoder.decode(arrayBuffer);
-                            successEncoding = 'default';
+                        if (!detectedEncoding) {
+                            detectedEncoding = 'utf-8'; // 默认回退到 utf-8
+                            successEncoding = 'default (utf-8)';
+                        } else if (!successEncoding) {
+                            successEncoding = detectedEncoding;
                         }
                         
-                        // 检查最终解码结果是否有效
+                        // 2. 使用检测到的最佳编码解码完整文件
+                        // 这样只进行一次全量解码，大大提高大文件加载速度
+                        try {
+                            if (detectedEncoding === 'gbk' || detectedEncoding === 'gb18030' || detectedEncoding === 'hz-gb-2312') {
+                                const gbkBytes = new Uint8Array(arrayBuffer);
+                                text = GBK.decode(gbkBytes);
+                            } else {
+                                const decoder = new TextDecoder(detectedEncoding);
+                                text = decoder.decode(arrayBuffer);
+                            }
+                        } catch (err) {
+                            // 如果全量解码失败，尝试回退到 UTF-8
+                            console.error('全量解码失败，回退到 UTF-8', err);
+                            const decoder = new TextDecoder('utf-8');
+                            text = decoder.decode(arrayBuffer);
+                            successEncoding = 'fallback (utf-8)';
+                        }
+                        
+                        // 检查最终解码结果是否有效 (如果样本检测误判)
                         if (text && containsUnreadableChars(text)) {
                             // 如果包含太多无法读取的字符，尝试使用文件名提示的编码再次解码
                             const fileName_lower = fileName.toLowerCase();
-                            if (fileName_lower.includes('gbk') || 
-                                fileName_lower.includes('gb2312') || 
-                                fileName_lower.includes('gb18030')) {
-                                // 根据文件名提示尝试GBK
-                                const gbkBytes = new Uint8Array(arrayBuffer);
-                                text = GBK.decode(gbkBytes);
-                                successEncoding = 'gbk (filename hint)';
-                            } else if (fileName_lower.includes('big5')) {
-                                // 根据文件名提示尝试Big5
-                                const decoder = new TextDecoder('big5');
-                                text = decoder.decode(arrayBuffer);
-                                successEncoding = 'big5 (filename hint)';
-                            } else if (fileName_lower.includes('sjis') || fileName_lower.includes('shift-jis')) {
-                                // 根据文件名提示尝试Shift-JIS
-                                const decoder = new TextDecoder('shift-jis');
-                                text = decoder.decode(arrayBuffer);
-                                successEncoding = 'shift-jis (filename hint)';
-                            } else if (fileName_lower.includes('euc-kr')) {
-                                // 根据文件名提示尝试EUC-KR
-                                const decoder = new TextDecoder('euc-kr');
-                                text = decoder.decode(arrayBuffer);
-                                successEncoding = 'euc-kr (filename hint)';
-                            } else if (fileName_lower.includes('utf16') || fileName_lower.includes('utf-16')) {
-                                // 根据文件名提示尝试UTF-16
+                            let hintEncoding = null;
+                            
+                            if (fileName_lower.includes('gbk') || fileName_lower.includes('gb2312')) hintEncoding = 'gbk';
+                            else if (fileName_lower.includes('big5')) hintEncoding = 'big5';
+                            else if (fileName_lower.includes('shift-jis') || fileName_lower.includes('sjis')) hintEncoding = 'shift-jis';
+                            
+                            if (hintEncoding && hintEncoding !== detectedEncoding) {
                                 try {
-                                    const decoder = new TextDecoder('utf-16le');
-                                    text = decoder.decode(arrayBuffer);
-                                    successEncoding = 'utf-16le (filename hint)';
-                                } catch (err) {
-                                    try {
-                                        const decoder = new TextDecoder('utf-16be');
+                                    if (hintEncoding === 'gbk') {
+                                        const gbkBytes = new Uint8Array(arrayBuffer);
+                                        text = GBK.decode(gbkBytes);
+                                    } else {
+                                        const decoder = new TextDecoder(hintEncoding);
                                         text = decoder.decode(arrayBuffer);
-                                        successEncoding = 'utf-16be (filename hint)';
-                                    } catch (err2) {
-                                        // 两种UTF-16都失败了
                                     }
-                                }
+                                    successEncoding = hintEncoding + ' (filename hint)';
+                                } catch (e) {}
                             }
                         }
                         
@@ -662,7 +664,6 @@
                     const wordsPerPage = e.data.wordsPerPage;
                     
                     try {
-                        const lines = text.split('\\n');
                         let chapters = [];
                         let position = 0;
                         let lastChapterStart = 0;
@@ -676,11 +677,17 @@
                             /^(序章|序幕|前言|引子|楔子|尾声|后记|番外|番外篇|终章|完本感言|附录|附件)/  // 特殊章节
                         ];
                         
-                        // 检查是否有章节
+                        // 预扫描检查是否有章节 (只检查前 2000 行)
+                        // 避免对无章节的大文件进行全量扫描
                         let hasChapters = false;
-                        for (let i = 0; i < Math.min(2000, lines.length); i++) {
-                            const line = lines[i].trim();
-                            // 章节名通常比较短，忽略过长的行以提高准确性
+                        let scanIndex = 0;
+                        let lineCount = 0;
+                        
+                        while (lineCount < 2000 && scanIndex < text.length) {
+                            let nextNewLine = text.indexOf('\\n', scanIndex);
+                            if (nextNewLine === -1) nextNewLine = text.length;
+                            
+                            const line = text.slice(scanIndex, nextNewLine).trim();
                             if (line.length > 0 && line.length < 50) {
                                 for (const pattern of chapterPatterns) {
                                     if (pattern.test(line)) {
@@ -688,8 +695,11 @@
                                         break;
                                     }
                                 }
-                                if (hasChapters) break;
                             }
+                            if (hasChapters) break;
+                            
+                            scanIndex = nextNewLine + 1;
+                            lineCount++;
                         }
                         
                         if (!hasChapters) {
@@ -702,10 +712,18 @@
                         }
                         
                         // 如果有章节，按章节处理
-                        // 检查第一行是否为章节，如果不是，添加"开始"作为第一章
+                        // 完整扫描，避免使用 split('\\n') 创建巨大数组
+                        let currentIndex = 0;
+                        let textLength = text.length;
+                        
+                        // 检查第一行是否为章节
+                        let firstLineEnd = text.indexOf('\\n');
+                        if (firstLineEnd === -1) firstLineEnd = textLength;
+                        const firstLine = text.slice(0, firstLineEnd).trim();
+                        
                         let firstChapterFound = false;
                         for (const pattern of chapterPatterns) {
-                            if (pattern.test(lines[0].trim())) {
+                            if (pattern.test(firstLine)) {
                                 firstChapterFound = true;
                                 break;
                             }
@@ -719,10 +737,16 @@
                             });
                         }
                         
-                        lines.forEach((line, index) => {
-                            let isChapter = false;
+                        // 遍历全文查找章节
+                        while (currentIndex < textLength) {
+                            let nextNewLine = text.indexOf('\\n', currentIndex);
+                            if (nextNewLine === -1) nextNewLine = textLength;
+                            
+                            // 获取当前行内容 (不包含换行符)
+                            const line = text.slice(currentIndex, nextNewLine);
                             const trimmedLine = line.trim();
                             
+                            let isChapter = false;
                             // 章节名通常比较短，忽略过长的行
                             if (trimmedLine.length > 0 && trimmedLine.length < 50) {
                                 for (const pattern of chapterPatterns) {
@@ -735,17 +759,20 @@
                             
                             if (isChapter) {
                                 if (chapters.length > 0) {
-                                    chapters[chapters.length - 1].content = text.slice(lastChapterStart, position);
+                                    // 设置上一章的内容
+                                    chapters[chapters.length - 1].content = text.slice(lastChapterStart, currentIndex);
                                 }
                                 chapters.push({
                                     title: trimmedLine,
-                                    position: position,
+                                    position: currentIndex,
                                     content: ''
                                 });
-                                lastChapterStart = position;
+                                lastChapterStart = currentIndex;
                             }
-                            position += line.length + 1;
-                        });
+                            
+                            // 移动到下一行
+                            currentIndex = nextNewLine + 1;
+                        }
                         
                         if (chapters.length > 0) {
                             chapters[chapters.length - 1].content = text.slice(lastChapterStart);
@@ -771,7 +798,7 @@
         }
 
         // 修复无章节文件的分页问题
-        function showTextPage(pageNum, totalPages) {
+        function showTextPage(pageNum, totalPages, options = {}) {
             if (pageNum >= 0 && pageNum < totalPages) {
                 currentPage = pageNum;
 
@@ -779,43 +806,61 @@
                 // 确保内容区域可见
                 content.style.display = 'block';
 
+                // 保存当前的滚动位置
+                const savedScrollTop = content.scrollTop;
+                const savedWindowScrollY = window.scrollY;
+
                 // 获取当前页内容
                 const pageText = currentContent[currentPage];
 
                 // 按行拆分当前页内容并显示
+                let htmlContent = '';
                 if (pageText) {
                     const lines = pageText.split('\n');
-                    let htmlContent = '';
                     for (let line of lines) {
                         htmlContent += line.trim()
                             ? `<p>${line}</p>`
                             : '<p><br></p>';
                     }
-                    content.innerHTML = htmlContent || '<p>此页内容为空</p>';
-
-                    // 应用段落间距设置
-                    const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
-                    if (settings.paragraphSpacing) {
-                        const paragraphs = document.querySelectorAll('#content p');
-                        paragraphs.forEach(p => {
-                            p.style.marginBottom = `${settings.paragraphSpacing}em`;
-                        });
-                    }
                 } else {
-                    // 页面内容为空
-                    content.innerHTML = '<p>此页无内容</p>';
+                    htmlContent = '<p>此页内容为空</p>';
                     console.warn('当前页内容为空: pageNum =', pageNum, 'totalPages =', totalPages);
+                }
+
+                // 如果是后台更新且内容没有变化，则不重新渲染DOM
+                if (options.isBackground && content.innerHTML === htmlContent) {
+                    console.log('后台更新：内容未变，跳过DOM更新');
+                    return;
+                }
+
+                content.innerHTML = htmlContent || '<p>此页内容为空</p>';
+
+                // 应用段落间距设置
+                const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+                if (settings.paragraphSpacing) {
+                    const paragraphs = document.querySelectorAll('#content p');
+                    paragraphs.forEach(p => {
+                        p.style.marginBottom = `${settings.paragraphSpacing}em`;
+                    });
                 }
 
                 // 更新页码显示，确保页码正确
                 document.getElementById('page-info').textContent = `第 ${currentPage + 1}/${totalPages} 页`;
 
-                // 保存进度
-                saveProgress();
+                // 保存进度（预览模式下不保存，后台更新也不保存）
+                if (!options.isPreview && !options.isBackground) {
+                    saveProgress();
+                }
 
-                // 滚动到页面顶部
-                window.scrollTo(0, 0);
-                content.scrollTop = 0;
+                // 只有非后台更新时才强制滚动到顶部
+                if (!options.isBackground) {
+                    window.scrollTo(0, 0);
+                    content.scrollTop = 0;
+                } else {
+                    // 后台更新，恢复滚动位置
+                    content.scrollTop = savedScrollTop;
+                    window.scrollTo(0, savedWindowScrollY);
+                }
 
                 // 确保翻页按钮可见
                 document.querySelector('.navigation-buttons').style.display = 'flex';
@@ -827,7 +872,7 @@
             }
         }
 
-        function showPage(pageNum, chapterNum = currentChapter) {
+        function showPage(pageNum, chapterNum = currentChapter, options = {}) {
             if (!chapters[chapterNum]) {
                 console.error('无效的章节:', chapterNum);
                 return;
@@ -843,11 +888,29 @@
                 const start = currentPage * wordsPerPage;
                 const end = start + wordsPerPage;
                 const content = document.getElementById('content');
-                content.innerHTML = chapterContent
+
+                // 保存当前的滚动位置
+                const savedScrollTop = content.scrollTop;
+                const savedWindowScrollY = window.scrollY;
+
+                // 如果是后台更新且内容没有变化，则不重新渲染DOM，避免闪烁
+                // 这里简单比较一下内容长度，如果完全一致可能不需要重绘
+                // 但为了保险起见，我们只在 isBackground 为 true 时尝试优化
+                // 实际上，最简单的防闪烁是保持滚动位置
+
+                const newHTML = chapterContent
                     .slice(start, end)
                     .split('\n')
                     .map(line => line.trim() ? `<p>${line}</p>` : '<p><br></p>')
                     .join('');
+
+                // 如果内容完全一样，直接返回，不操作DOM
+                if (options.isBackground && content.innerHTML === newHTML) {
+                    console.log('后台更新：内容未变，跳过DOM更新');
+                    return;
+                }
+
+                content.innerHTML = newHTML;
 
                 // 应用段落间距设置
                 const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
@@ -860,12 +923,21 @@
 
                 document.getElementById('page-info').textContent = `第 ${currentPage + 1}/${totalPages} 页`;
 
-                // 保存进度
-                saveProgress();
+                // 保存进度（预览模式下不保存，后台更新也不保存）
+                if (!options.isPreview && !options.isBackground) {
+                    saveProgress();
+                }
 
-                // 滚动到页面顶部
-                window.scrollTo(0, 0);
-                content.scrollTop = 0;
+                // 只有非后台更新时才强制滚动到顶部
+                // 后台更新时，用户可能正在阅读，保持位置
+                if (!options.isBackground) {
+                    window.scrollTo(0, 0);
+                    content.scrollTop = 0;
+                } else {
+                    // 后台更新，恢复滚动位置
+                    content.scrollTop = savedScrollTop;
+                    window.scrollTo(0, savedWindowScrollY);
+                }
             } else {
                 console.error('无效的页码:', pageNum, '总页数:', totalPages);
             }
@@ -930,13 +1002,25 @@
         function toggleChapterList() {
             const chapterList = document.getElementById('chapter-list');
             if (chapterList.classList.contains('hidden')) {
+                // 如果没有打开书籍，不显示目录
+                if (!currentFileName) {
+                    showNotification('请先打开一本书');
+                    return;
+                }
+
                 updateChapterList();
                 chapterList.classList.remove('hidden');
 
-                // 添加鼠标离开事件监听
-                chapterList.addEventListener('mouseleave', function () {
-                    chapterList.classList.add('hidden');
-                });
+                // 滚动到当前章节
+                const activeItem = chapterList.querySelector('.chapter-item.active');
+                if (activeItem) {
+                    // 将当前章节滚动到可视区域中间
+                    setTimeout(() => {
+                        activeItem.scrollIntoView({ block: 'center', behavior: 'auto' });
+                    }, 0);
+                }
+            } else {
+                chapterList.classList.add('hidden');
             }
         }
 
@@ -1140,19 +1224,27 @@
                 toggleTheme();
                 e.preventDefault();
             }
-            // ESC键 - 返回主页
-            else if (e.key === 'Escape') {
-                backToHome();
-                e.preventDefault();
-            }
+            // ESC键 - 返回主页 (已在全局监听器中处理)
+            // else if (e.key === 'Escape') {
+            //     backToHome();
+            //     e.preventDefault();
+            // }
         });
 
         function updateChapterList() {
             const chapterList = document.getElementById('chapter-list');
-            chapterList.innerHTML = chapters.map((chapter, index) =>
+            const headerHtml = `
+                <div class="chapter-list-header">
+                    <h3>目录</h3>
+                    <button class="close-btn" onclick="toggleChapterList()">×</button>
+                </div>
+            `;
+            const listHtml = chapters.map((chapter, index) =>
                 `<div class="chapter-item ${index === currentChapter ? 'active' : ''}" 
-                      onclick="jumpToChapter(${index})">${chapter.title}</div>`
+                      onclick="jumpToChapter(${index}); toggleChapterList();">${chapter.title}</div>`
             ).join('');
+
+            chapterList.innerHTML = headerHtml + '<div class="chapter-list-content">' + listHtml + '</div>';
         }
 
         // 修改 loadHistoryRecord 和 searchFile 函数，支持多本书的阅读进度
@@ -1236,30 +1328,8 @@
                 }
 
                 if (foundPath) {
-                    document.querySelector('.loading-message').textContent = `正在加载文件: ${fileName}...`;
-                    const data = await ipcRenderer.invoke('read-file', foundPath);
-
-                    // 使用 processFileContent 处理内容（包含自动编码检测）
-                    // 注意：data 可能是 Buffer 或 Uint8Array
-                    let arrayBuffer;
-                    if (data.buffer) {
-                        arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-                    } else {
-                        arrayBuffer = new Uint8Array(data).buffer;
-                    }
-
-                    processFileContent(arrayBuffer, fileName);
-
-                    // 恢复进度逻辑移到 processFileContent 的回调或后续处理中
-                    // 但 processFileContent 是异步的（通过 Worker），我们需要传递恢复参数
-                    // 这里我们通过全局变量传递，或者修改 processFileContent
-                    // 现有的 processFileContent 已经会读取 localStorage，但我们需要优先使用 pendingPosition
-
-                    // 由于 processFileContent 内部使用了 Worker 且没有返回 Promise，
-                    // 我们依赖它内部的 onmessage 来处理后续逻辑
-                    // 现有的 processFileContent 逻辑中已经有从 localStorage 读取进度的代码
-                    // 我们需要确保它能使用 window.pendingPosition
-
+                    // 使用新的智能加载函数
+                    await loadAndRenderBook(foundPath, fileName, window.pendingPosition || 0, window.pendingChapter || 0);
                 } else {
                     throw new Error(`找不到文件: ${fileName}`);
                 }
@@ -1310,12 +1380,15 @@
             // 添加新记录到最前面
             history.unshift(record);
 
-            // 限制历史记录数量为50条
-            if (history.length > 50) {
-                history.pop();
-            }
+            // 移除历史记录数量限制，改为无限
+            // if (history.length > 50) {
+            //     history.pop();
+            // }
 
             localStorage.setItem('readingHistory', JSON.stringify(history));
+
+            // 同步到云端/本地库目录
+            ipcRenderer.invoke('save-history', history).catch(err => console.error('同步历史记录失败:', err));
 
             // 如果当前在主页，则更新历史记录显示
             if (!currentFileName) {
@@ -1427,6 +1500,9 @@
             let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
             history = history.filter(record => record.fileName !== fileName);
             localStorage.setItem('readingHistory', JSON.stringify(history));
+
+            // 同步到云端/本地库目录
+            ipcRenderer.invoke('save-history', history).catch(err => console.error('同步历史记录失败:', err));
 
             // 同时清除阅读进度
             let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
@@ -1831,10 +1907,15 @@
         });
 
         // 修复显示所有内容的函数
-        function showAllContent() {
+        function showAllContent(options = {}) {
             const content = document.getElementById('content');
             // 确保内容区域可见
             content.style.display = 'block';
+
+            // 保存当前的滚动位置
+            const savedScrollTop = content.scrollTop;
+            const savedWindowScrollY = window.scrollY;
+
             content.innerHTML = '';
 
             if (chapters.length > 0) {
@@ -1893,8 +1974,14 @@
                 content.innerHTML = '<p>没有可显示的内容</p>';
             }
 
-            // 滚动到当前阅读位置
-            scrollToCurrentPosition();
+            if (options.isBackground) {
+                // 后台更新，恢复滚动位置
+                content.scrollTop = savedScrollTop;
+                window.scrollTo(0, savedWindowScrollY);
+            } else {
+                // 滚动到当前阅读位置
+                scrollToCurrentPosition();
+            }
         }
 
         // 滚动到当前阅读位置
@@ -2097,6 +2184,36 @@
 
             // 应用存储的字体设置
             applyStoredSettings();
+
+            // 尝试从云端加载历史记录并合并
+            ipcRenderer.invoke('load-history').then(cloudHistory => {
+                if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
+                    let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
+
+                    // 合并策略：以时间戳为准，合并两个列表
+                    // 创建一个 Map 以 fileName 为键
+                    const historyMap = new Map();
+
+                    // 先放入本地记录
+                    localHistory.forEach(item => historyMap.set(item.fileName, item));
+
+                    // 再放入云端记录，如果时间戳更新则覆盖
+                    cloudHistory.forEach(item => {
+                        const existing = historyMap.get(item.fileName);
+                        if (!existing || (item.timestamp > existing.timestamp)) {
+                            historyMap.set(item.fileName, item);
+                        }
+                    });
+
+                    // 转回数组并按时间排序
+                    const mergedHistory = Array.from(historyMap.values())
+                        .sort((a, b) => b.timestamp - a.timestamp);
+
+                    localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
+                    updateHistoryDisplay();
+                }
+            }).catch(err => console.error('加载云端历史记录失败:', err));
+
             // 更新历史记录显示
             updateHistoryDisplay();
 
@@ -2109,7 +2226,41 @@
             document.addEventListener('DOMContentLoaded', initApp);
         } else {
             initApp();
-        }        // 设置书库路径
+        }
+
+        // 全局按键监听
+        document.addEventListener('keydown', function (e) {
+            // ESC键处理
+            if (e.key === 'Escape') {
+                // 1. 如果目录打开，关闭目录
+                const chapterList = document.getElementById('chapter-list');
+                if (chapterList && !chapterList.classList.contains('hidden')) {
+                    chapterList.classList.add('hidden');
+                    // 不 return，继续执行以返回主页
+                }
+
+                // 2. 如果有模态框打开，关闭模态框
+                const modals = document.querySelectorAll('.modal');
+                let modalClosed = false;
+                modals.forEach(modal => {
+                    if (modal.parentNode) {
+                        // 模态框通常有自己的关闭逻辑，这里只检测是否存在
+                        // 如果存在，说明用户是在与模态框交互，ESC 应该只关闭模态框
+                        modalClosed = true;
+                    }
+                });
+
+                // 如果有模态框，ESC 只负责关闭模态框（由模态框内部逻辑处理），不返回主页
+                if (modalClosed) return;
+
+                // 3. 如果没有模态框，执行返回主页
+                if (currentFileName) {
+                    backToHome();
+                }
+            }
+        });
+
+        // 设置书库路径
         async function setLibraryPath() {
             try {
                 let newPath;
@@ -2294,7 +2445,18 @@
                 // 绑定按钮事件
                 const close = () => {
                     if (modal.parentNode) modal.parentNode.removeChild(modal);
+                    document.removeEventListener('keydown', handleEsc, { capture: true });
                 };
+
+                // ESC 键关闭
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') {
+                        e.stopPropagation();
+                        close();
+                        reject('cancelled');
+                    }
+                };
+                document.addEventListener('keydown', handleEsc, { capture: true });
 
                 modal.querySelector('.modal-close').addEventListener('click', () => {
                     close();
@@ -2368,6 +2530,13 @@
         function saveProgress() {
             if (!currentFileName) return; // 如果没有打开文件，不保存
 
+            // 检查是否处于预览模式
+            // 如果正在后台加载或处于预览模式，不要保存进度，以免覆盖正确的历史记录
+            if (window.isPreviewMode || document.getElementById('loading-overlay').style.display !== 'none') {
+                console.log('正在加载或预览中，跳过保存进度');
+                return;
+            }
+
             // 获取所有书籍的进度记录
             let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
 
@@ -2397,6 +2566,10 @@
             currentPage = 0;
             currentChapter = 0;
             chapters = [];
+
+            // 重置标题
+            document.getElementById('book-title').textContent = '优雅阅读器';
+
             updateHistoryDisplay();
 
             // 滚动到顶部，确保首页从顶部开始
@@ -2425,6 +2598,10 @@
 
                 // 显示加载中状态
                 document.getElementById('loading-overlay').style.display = 'flex';
+                document.querySelector('.loading-message').textContent = '正在随机获取书籍...';
+
+                // 强制UI渲染
+                await new Promise(resolve => requestAnimationFrame(resolve));
 
                 // 获取随机文件
                 console.log('正在获取随机文件，路径:', baseDir);
@@ -2433,25 +2610,10 @@
                     throw new Error('没有找到任何 TXT 文件');
                 }
 
-                // 获取文件内容
-                const data = await ipcRenderer.invoke('read-file', filePath);
+                // 使用智能加载
+                const fileName = filePath.split(/[/\\]/).pop();
+                await loadAndRenderBook(filePath, fileName);
 
-                // data 可能是 Uint8Array (Web) 或 Buffer (Electron)
-                // 转换为 ArrayBuffer
-                let arrayBuffer;
-                if (data.buffer) {
-                    // 如果是 TypedArray 或 Buffer
-                    // 注意：Buffer.buffer 可能是共享的，所以需要 slice
-                    arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-                } else {
-                    // 可能是普通数组或其他
-                    arrayBuffer = new Uint8Array(data).buffer;
-                }
-
-                // 使用 processFileContent 处理内容（包含自动编码检测）
-                processFileContent(arrayBuffer, currentFileName);
-
-                document.getElementById('loading-overlay').style.display = 'none';
             } catch (error) {
                 console.error('加载随机书籍失败:', error);
                 alert('加载随机书籍失败: ' + error.message);
@@ -2655,7 +2817,24 @@
                 const closeModal = () => {
                     document.body.style.overflow = ''; // 恢复滚动
                     if (modal.parentNode) modal.parentNode.removeChild(modal);
+                    // 移除 ESC 监听
+                    document.removeEventListener('keydown', handleEsc, { capture: true });
                 };
+
+                // ESC 键关闭
+                const handleEsc = (e) => {
+                    if (e.key === 'Escape') {
+                        e.stopPropagation();
+                        closeModal();
+                    }
+                };
+                // 使用 capture: true 确保在全局监听器之前捕获
+                document.addEventListener('keydown', handleEsc, { capture: true });
+
+                modal.querySelector('.modal-close').addEventListener('click', closeModal);
+                modal.addEventListener('click', (e) => {
+                    if (e.target === modal) closeModal();
+                });
 
                 // 绑定文件夹点击事件（展开/折叠）
                 modal.querySelectorAll('.directory > .tree-content').forEach(header => {
@@ -2690,13 +2869,6 @@
                     });
                 });
 
-                modal.querySelector('.modal-close').addEventListener('click', closeModal);
-
-                // 点击遮罩关闭
-                modal.addEventListener('click', (e) => {
-                    if (e.target === modal) closeModal();
-                });
-
             } catch (error) {
                 document.getElementById('loading-overlay').style.display = 'none';
                 console.error('获取书库失败:', error);
@@ -2706,81 +2878,129 @@
 
         async function loadServerBook(filePath, fileName) {
             try {
-                document.getElementById('loading-overlay').style.display = 'flex';
-                document.querySelector('.loading-message').textContent = '正在加载书籍...';
-
-                const data = await ipcRenderer.invoke('read-file', filePath);
-
-                // data 可能是 Uint8Array (Web) 或 Buffer (Electron)
-                // 转换为 ArrayBuffer
-                let arrayBuffer;
-                if (data.buffer) {
-                    // 如果是 TypedArray 或 Buffer
-                    // 注意：Buffer.buffer 可能是共享的，所以需要 slice
-                    arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-                } else {
-                    // 可能是普通数组或其他
-                    arrayBuffer = new Uint8Array(data).buffer;
-                }
-
-                processFileContent(arrayBuffer, fileName);
-
+                await loadAndRenderBook(filePath, fileName);
             } catch (error) {
-                document.getElementById('loading-overlay').style.display = 'none';
                 console.error('加载书籍失败:', error);
                 showNotification('加载书籍失败: ' + error.message);
             }
         }
 
-        // 处理文件内容（复用现有的 Worker 逻辑）
-        function processFileContent(buffer, fileName) {
-            document.getElementById('loading-overlay').style.display = 'flex';
-            document.querySelector('.loading-message').textContent = '正在处理文件内容...';
+        // 智能加载书籍（支持大文件分片加载）
+        async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initialChapter = 0) {
+            try {
+                document.getElementById('loading-overlay').style.display = 'flex';
+                document.querySelector('.loading-message').textContent = `正在加载: ${fileName}...`;
 
-            currentFileName = fileName;
+                // 设置全局预览模式标志，防止在预览期间保存进度
+                window.isPreviewMode = true;
+                // 重置等待历史记录标志
+                window.waitingForHistory = false;
 
-            const fileWorker = createFileWorker();
-
-            fileWorker.onmessage = function (e) {
-                const result = e.data;
-                if (result.error) {
-                    console.error("文件处理错误:", result.error);
-                    alert("文件处理失败: " + result.error);
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    return;
+                // 如果提供了初始位置，更新 allBookProgress
+                // 这样后台加载完成后，detectChapters 能读取到正确的进度
+                if (initialPosition > 0 || initialChapter > 0) {
+                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                    allBookProgress[fileName] = {
+                        page: initialPosition,
+                        chapter: initialChapter,
+                        lastRead: new Date().toISOString(),
+                        hasChapters: true // 假设有章节，detectChapters 会修正
+                    };
+                    localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
                 }
 
-                const text = result.text;
-                const encoding = result.encoding || '未知';
+                // 强制UI渲染
+                await new Promise(resolve => requestAnimationFrame(resolve));
 
-                showNotification(`检测到文件编码: ${encoding}`);
+                // 直接加载完整文件
+                const data = await ipcRenderer.invoke('read-file', filePath);
 
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-                if (allBookProgress[currentFileName]) {
-                    currentPage = allBookProgress[currentFileName].page;
-                    currentChapter = allBookProgress[currentFileName].chapter;
+                let arrayBuffer;
+                if (data.buffer) {
+                    arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
                 } else {
-                    currentPage = 0;
-                    currentChapter = 0;
+                    arrayBuffer = new Uint8Array(data).buffer;
                 }
 
-                document.getElementById('book-title').textContent = fileName.replace('.txt', '');
-                document.querySelector('.loading-message').textContent = '正在分析章节结构...';
-                document.getElementById('content').style.display = 'block';
+                // 普通加载不是预览模式
+                window.isPreviewMode = false;
+                await processFileContent(arrayBuffer, fileName);
 
-                detectChapters(text);
+            } catch (error) {
+                console.error('加载书籍失败:', error);
+                showNotification('加载书籍失败: ' + error.message);
+                document.getElementById('loading-overlay').style.display = 'none';
+                window.isPreviewMode = false; // 出错重置
+            }
+        }        // 处理文件内容（复用现有的 Worker 逻辑）
+        function processFileContent(buffer, fileName, options = {}) {
+            return new Promise((resolve, reject) => {
+                // 只有在非后台加载时才显示遮罩
+                if (!options.isBackground) {
+                    document.getElementById('loading-overlay').style.display = 'flex';
+                    document.querySelector('.loading-message').textContent = '正在处理文件内容...';
+                }
 
-                addToHistory({
-                    fileName: currentFileName,
-                    date: new Date().toLocaleString(),
-                    lastPosition: currentPage,
-                    chapter: currentChapter
+                currentFileName = fileName;
+
+                const fileWorker = createFileWorker();
+
+                fileWorker.onmessage = function (e) {
+                    // 如果当前文件名不匹配（说明用户已经切换了书籍或退出了），则不处理结果
+                    if (currentFileName !== fileName) {
+                        console.log('文件处理结果已过期，忽略');
+                        return;
+                    }
+
+                    const result = e.data;
+                    if (result.error) {
+                        console.error("文件处理错误:", result.error);
+                        if (!options.isBackground) {
+                            alert("文件处理失败: " + result.error);
+                            document.getElementById('loading-overlay').style.display = 'none';
+                        }
+                        reject(result.error);
+                        return;
+                    }
+
+                    const text = result.text;
+                    const encoding = result.encoding || '未知';
+
+                    if (!options.isPreview && !options.isBackground) {
+                        showNotification(`检测到文件编码: ${encoding}`);
+                    }
+
+                    const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                    if (allBookProgress[currentFileName]) {
+                        currentPage = allBookProgress[currentFileName].page;
+                        currentChapter = allBookProgress[currentFileName].chapter;
+                    } else {
+                        currentPage = 0;
+                        currentChapter = 0;
+                    }
+
+                    // 只有在非后台加载时才更新标题，防止闪烁
+                    if (!options.isBackground) {
+                        document.getElementById('book-title').textContent = fileName.replace('.txt', '');
+                        document.querySelector('.loading-message').textContent = '正在分析章节结构...';
+                    }
+
+                    document.getElementById('content').style.display = 'block';
+
+                    detectChapters(text, options);
+
+                    addToHistory({
+                        fileName: currentFileName,
+                        date: new Date().toLocaleString(),
+                        lastPosition: currentPage,
+                        chapter: currentChapter
+                    });
+
+                    resolve();
+                }; fileWorker.postMessage({
+                    buffer: buffer,
+                    fileName: fileName
                 });
-            };
-
-            fileWorker.postMessage({
-                buffer: buffer,
-                fileName: fileName
             });
         }
     </script>

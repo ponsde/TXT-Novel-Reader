@@ -15,7 +15,7 @@ body.dark-mode {
 
 body.dark-mode .reader-container {
     background-color: #2d2d2d;
-    box-shadow: 0 2px 15px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 15px rgba(0, 0, 0, 0.2);
 }
 
 body.warm {
@@ -106,7 +106,7 @@ body.green {
     padding: 40px 80px;
     background-color: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 15px rgba(0, 0, 0, 0.05);
     line-height: 1.8;
     font-size: 16px;
     min-height: 600px;
@@ -143,7 +143,7 @@ body.green {
     background: #fff;
     padding: 20px;
     border-radius: 8px;
-    box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 15px rgba(0, 0, 0, 0.05);
     text-align: center;
     width: 100%;
     box-sizing: border-box;
@@ -172,13 +172,13 @@ button {
     cursor: pointer;
     font-size: 15px;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
 }
 
 button:hover {
     background-color: #2980b9;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
 #page-info {
@@ -203,14 +203,14 @@ input[type="file"] {
     cursor: pointer;
     font-size: 15px;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
     margin-bottom: 15px;
 }
 
 .file-upload-label:hover {
     background-color: #27ae60;
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
 }
 
 /* 夜间模式下的样式调整 */
@@ -249,10 +249,51 @@ body.dark-mode .progress-bar {
     max-height: 70vh;
     background: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    padding: 15px;
-    overflow-y: auto;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     z-index: 99;
+}
+
+.chapter-list-header {
+    padding: 15px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #fff;
+    border-radius: 8px 8px 0 0;
+    flex-shrink: 0;
+}
+
+.chapter-list-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: bold;
+    color: #333;
+}
+
+.chapter-list-header .close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    color: #999;
+    padding: 0 5px;
+    outline: none;
+}
+
+.chapter-list-header .close-btn:hover {
+    color: #333;
+}
+
+.chapter-list-content {
+    overflow-y: auto;
+    flex: 1;
+    padding: 10px 0;
 }
 
 .chapter-list.hidden {
@@ -284,6 +325,23 @@ body.dark-mode .progress-bar {
 body.dark-mode .chapter-list {
     background-color: #2d2d2d;
     border-color: #444;
+}
+
+body.dark-mode .chapter-list-header {
+    background-color: #2d2d2d;
+    border-bottom-color: #444;
+}
+
+body.dark-mode .chapter-list-header h3 {
+    color: #ddd;
+}
+
+body.dark-mode .chapter-list-header .close-btn {
+    color: #888;
+}
+
+body.dark-mode .chapter-list-header .close-btn:hover {
+    color: #fff;
 }
 
 body.dark-mode .chapter-item {
@@ -352,8 +410,13 @@ body.dark-mode .chapter-item.active {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 .reader-sidebar {
@@ -363,7 +426,7 @@ body.dark-mode .chapter-item.active {
     transform: translateY(-50%);
     width: 60px;
     background: #fff;
-    box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
     border-radius: 8px;
     z-index: 100;
 }
@@ -408,7 +471,7 @@ body.dark-mode .chapter-item.active {
     left: 50%;
     transform: translate(-50%, -50%);
     background-color: white;
-    box-shadow: 0 2px 20px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.3);
     border-radius: 10px;
     padding: 20px;
     width: 400px;
@@ -490,7 +553,7 @@ body.dark-mode .chapter-item.active {
 /* 深色模式设置面板 */
 body.dark-mode .settings-panel {
     background-color: #2d2d2d;
-    box-shadow: 0 2px 20px rgba(0,0,0,0.5);
+    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.5);
 }
 
 body.dark-mode .settings-panel-header {
@@ -635,7 +698,7 @@ body.dark-mode .setting-btn:hover {
     transform: translateY(-50%);
     width: 60px;
     background: #fff;
-    box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
     border-radius: 8px;
     z-index: 100;
 }
@@ -649,7 +712,7 @@ body.dark-mode .setting-btn:hover {
     width: 280px;
     background: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
     padding: 20px;
     z-index: 99;
 }
@@ -693,7 +756,7 @@ body.dark-mode .setting-btn:hover {
     padding: 15px;
     background: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     cursor: pointer;
     transition: all 0.3s ease;
     display: flex;
@@ -704,7 +767,7 @@ body.dark-mode .setting-btn:hover {
 
 .history-item:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
 .history-info {
@@ -718,7 +781,8 @@ body.dark-mode .setting-btn:hover {
     font-weight: 500;
 }
 
-.history-date, .history-progress {
+.history-date,
+.history-progress {
     font-size: 14px;
     color: #7f8c8d;
     margin-bottom: 5px;
@@ -809,7 +873,7 @@ body.dark-mode .history-delete:hover {
 .context-menu {
     position: absolute;
     background-color: white;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     border-radius: 6px;
     z-index: 1000;
     width: 180px;
@@ -845,7 +909,7 @@ body.dark-mode .context-menu-item:hover {
     color: white;
     padding: 15px 20px;
     border-radius: 6px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     z-index: 2000;
     font-size: 14px;
     opacity: 1;

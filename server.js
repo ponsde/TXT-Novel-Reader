@@ -100,7 +100,7 @@ async function getAllTxtFiles(dir) {
         'node_modules', '.git', '.vscode', '.idea', 'dist', 'build', 'coverage',
         '$RECYCLE.BIN', 'System Volume Information', 'Windows', 'Program Files', 'Program Files (x86)'
     ]);
-    const MAX_DEPTH = 10;
+    const MAX_DEPTH = 20;
 
     async function scan(directory, depth = 0) {
         if (depth > MAX_DEPTH) return;
@@ -212,6 +212,32 @@ const apiHandlers = {
         const filePath = args[0];
         // 安全检查：防止读取系统关键文件，这里简单放行，因为是个人服务器
         return await fsPromises.readFile(filePath); // 返回 Buffer，JSON.stringify 会将其转换为 {type: 'Buffer', data: [...]}
+    },
+
+    'get-file-size': async (args) => {
+        const filePath = args[0];
+        try {
+            const stats = await fsPromises.stat(filePath);
+            return stats.size;
+        } catch (error) {
+            return 0;
+        }
+    },
+
+    'read-file-chunk': async (args) => {
+        const [filePath, start, length] = args;
+        let fd = null;
+        try {
+            fd = await fsPromises.open(filePath, 'r');
+            const buffer = Buffer.alloc(length);
+            const { bytesRead } = await fd.read(buffer, 0, length, start);
+            return buffer.subarray(0, bytesRead);
+        } catch (error) {
+            console.error('读取文件分片失败:', error);
+            return null;
+        } finally {
+            if (fd) await fd.close();
+        }
     },
 
     'get-file-list': async (args) => {

@@ -319,7 +319,7 @@ async function getAllTxtFiles(dir) {
     ]);
 
     // 最大递归深度，防止过深
-    const MAX_DEPTH = 10;
+    const MAX_DEPTH = 20;
 
     async function scan(directory, depth = 0) {
         if (depth > MAX_DEPTH) return;
@@ -521,6 +521,33 @@ ipcMain.handle('save-config', async (event, newSettings) => {
     }
 });
 
+// 获取文件大小
+ipcMain.handle('get-file-size', async (event, filePath) => {
+    try {
+        const stats = await fsPromises.stat(filePath);
+        return stats.size;
+    } catch (error) {
+        console.error('获取文件大小失败:', error);
+        return 0;
+    }
+});
+
+// 读取文件分片
+ipcMain.handle('read-file-chunk', async (event, filePath, start, length) => {
+    let fd = null;
+    try {
+        fd = await fsPromises.open(filePath, 'r');
+        const buffer = Buffer.alloc(length);
+        const { bytesRead } = await fd.read(buffer, 0, length, start);
+        return buffer.subarray(0, bytesRead);
+    } catch (error) {
+        console.error('读取文件分片失败:', error);
+        return null;
+    } finally {
+        if (fd) await fd.close();
+    }
+});
+
 // 添加查找并打开文件位置的处理函数
 ipcMain.handle('find-and-open-file-location', async (event, searchPaths, fileName) => {
     try {
@@ -575,3 +602,62 @@ async function findFileInDirectory(dir, fileName) {
 
     return await searchInDir(dir);
 }
+
+// 保存历史记录到文件
+ipcMain.handle('save-history', async (event, history) => {
+    try {
+        // 获取配置
+        const exePath = app.getPath('exe');
+        const configPath = path.join(path.dirname(exePath), 'config.json');
+        let libraryDir = '';
+
+        if (fs.existsSync(configPath)) {
+            const configData = await fsPromises.readFile(configPath, 'utf8');
+            const config = JSON.parse(configData);
+            libraryDir = config.libraryDir || config.baseDir;
+        }
+
+        // 如果没有配置路径，使用文档目录
+        if (!libraryDir) {
+            libraryDir = app.getPath('documents');
+        }
+
+        const historyPath = path.join(libraryDir, 'reading_history.json');
+        await fsPromises.writeFile(historyPath, JSON.stringify(history, null, 4));
+        return true;
+    } catch (error) {
+        console.error('保存历史记录失败:', error);
+        return false;
+    }
+});
+
+// 从文件加载历史记录
+ipcMain.handle('load-history', async () => {
+    try {
+        // 获取配置
+        const exePath = app.getPath('exe');
+        const configPath = path.join(path.dirname(exePath), 'config.json');
+        let libraryDir = '';
+
+        if (fs.existsSync(configPath)) {
+            const configData = await fsPromises.readFile(configPath, 'utf8');
+            const config = JSON.parse(configData);
+            libraryDir = config.libraryDir || config.baseDir;
+        }
+
+        // 如果没有配置路径，使用文档目录
+        if (!libraryDir) {
+            libraryDir = app.getPath('documents');
+        }
+
+        const historyPath = path.join(libraryDir, 'reading_history.json');
+        if (fs.existsSync(historyPath)) {
+            const data = await fsPromises.readFile(historyPath, 'utf8');
+            return JSON.parse(data);
+        }
+        return [];
+    } catch (error) {
+        console.error('加载历史记录失败:', error);
+        return [];
+    }
+});
