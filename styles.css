@@ -674,8 +674,8 @@ body.dark-mode .setting-group span {
 
     /* Mobile Top Bar */
     .mobile-top-bar {
-        display: flex;
-        justify-content: center;
+        display: grid;
+        grid-template-columns: 50px 1fr 50px;
         position: fixed;
         top: 0;
         left: 0;
@@ -694,13 +694,22 @@ body.dark-mode .setting-group span {
         transform: translateY(-100%);
     }
 
+    .mobile-top-bar .nav-btn {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+    }
+
     .mobile-top-bar .nav-title {
         font-size: 14px;
         color: #666;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 80%;
+        text-align: center;
+        width: 100%;
     }
 
     .reader-content {
