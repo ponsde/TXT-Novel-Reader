@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const url = require('url');
+const zlib = require('zlib');
 
 const PORT = 3000;
 const fsPromises = fs.promises;
@@ -419,22 +420,40 @@ const server = http.createServer(async (req, res) => {
 
                 try {
                     const stat = await fsPromises.stat(filePath);
+                    const acceptEncoding = req.headers['accept-encoding'] || '';
 
-                    res.writeHead(200, {
-                        'Content-Type': 'application/octet-stream',
-                        'Content-Length': stat.size
-                    });
+                    if (acceptEncoding.includes('gzip')) {
+                        // 使用 GZIP 压缩传输
+                        res.writeHead(200, {
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Encoding': 'gzip'
+                        });
 
-                    const stream = fs.createReadStream(filePath);
-                    stream.pipe(res);
+                        const gzip = zlib.createGzip();
+                        const stream = fs.createReadStream(filePath);
+                        stream.pipe(gzip).pipe(res);
 
-                    stream.on('error', (error) => {
-                        console.error('Stream error:', error);
-                        if (!res.headersSent) {
-                            res.writeHead(500);
-                            res.end(JSON.stringify({ error: 'File read error' }));
-                        }
-                    });
+                        stream.on('error', (error) => {
+                            console.error('Stream error:', error);
+                        });
+                    } else {
+                        // 不支持压缩，直接传输
+                        res.writeHead(200, {
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Length': stat.size
+                        });
+
+                        const stream = fs.createReadStream(filePath);
+                        stream.pipe(res);
+
+                        stream.on('error', (error) => {
+                            console.error('Stream error:', error);
+                            if (!res.headersSent) {
+                                res.writeHead(500);
+                                res.end(JSON.stringify({ error: 'File read error' }));
+                            }
+                        });
+                    }
                 } catch (error) {
                     console.error('File access error:', error);
                     res.writeHead(404, { 'Content-Type': 'application/json' });
