@@ -209,11 +209,11 @@
     <div class="reader-container">
         <!-- 移动端顶部栏 -->
         <div class="mobile-top-bar" id="mobile-top-bar">
-            <div class="nav-btn" onclick="toggleMobileSidebar()">
+            <div class="nav-btn" style="visibility: hidden;">
                 <i class="icon">≡</i>
             </div>
             <div class="nav-title" id="mobile-book-title">优雅阅读器</div>
-            <div class="nav-btn" style="visibility: hidden;">
+            <div class="nav-btn" onclick="toggleMobileSidebar()">
                 <i class="icon">≡</i>
             </div>
         </div>
@@ -2342,6 +2342,11 @@
 
                         // 切换侧边栏显示状态
                         sidebar.classList.toggle('active');
+
+                        // 切换顶部栏显示状态
+                        if (topBar) {
+                            topBar.classList.toggle('controls-hidden');
+                        }
 
                         // 如果侧边栏隐藏了，也隐藏目录和设置
                         if (!sidebar.classList.contains('active')) {
