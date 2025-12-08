@@ -2436,104 +2436,101 @@
             if (mobileLibraryButton) {
                 mobileLibraryButton.onclick = handleLibraryClick;
             }
-        } else {
-            console.error('Library button not found');
-        }
 
-        // 应用存储的字体设置
-        applyStoredSettings();
+            // 应用存储的字体设置
+            applyStoredSettings();
 
-        // 尝试从云端加载历史记录并合并
-        ipcRenderer.invoke('load-history').then(cloudHistory => {
-            if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
-                let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
+            // 尝试从云端加载历史记录并合并
+            ipcRenderer.invoke('load-history').then(cloudHistory => {
+                if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
+                    let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
 
-                // 合并策略：以时间戳为准，合并两个列表
-                // 创建一个 Map 以 fileName 为键
-                const historyMap = new Map();
+                    // 合并策略：以时间戳为准，合并两个列表
+                    // 创建一个 Map 以 fileName 为键
+                    const historyMap = new Map();
 
-                // 先放入本地记录
-                localHistory.forEach(item => historyMap.set(item.fileName, item));
+                    // 先放入本地记录
+                    localHistory.forEach(item => historyMap.set(item.fileName, item));
 
-                // 再放入云端记录，如果时间戳更新则覆盖
-                cloudHistory.forEach(item => {
-                    const existing = historyMap.get(item.fileName);
-                    if (!existing || (item.timestamp > existing.timestamp)) {
-                        historyMap.set(item.fileName, item);
+                    // 再放入云端记录，如果时间戳更新则覆盖
+                    cloudHistory.forEach(item => {
+                        const existing = historyMap.get(item.fileName);
+                        if (!existing || (item.timestamp > existing.timestamp)) {
+                            historyMap.set(item.fileName, item);
+                        }
+                    });
+
+                    // 转回数组并按时间排序
+                    const mergedHistory = Array.from(historyMap.values())
+                        .sort((a, b) => b.timestamp - a.timestamp);
+
+                    localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
+                    updateHistoryDisplay();
+                }
+            }).catch(err => console.error('加载云端历史记录失败:', err));
+
+            // 更新历史记录显示
+            updateHistoryDisplay();
+
+            // 加载配置
+            loadConfig().catch(err => console.error('配置加载失败:', err));
+
+            // 添加滚动监听，用于在滚动模式下实时保存进度
+            const content = document.getElementById('content');
+            content.addEventListener('scroll', debounce(function () {
+                if (pageMode === 'scroll' && chapters.length > 0) {
+                    const chapterTitles = content.querySelectorAll('.chapter-title');
+                    let activeChapterIndex = 0;
+
+                    // 找到当前视口顶部的章节
+                    // 优化：二分查找或从当前章节附近查找会更快，但这里简单遍历也行，因为章节数通常不会太多
+                    // 为了性能，我们可以假设用户不会瞬间跳跃太远，从 currentChapter 开始搜索
+
+                    // 简单遍历所有章节标题找到当前可见的
+                    // 注意：chapterTitles 是 NodeList
+                    for (let i = 0; i < chapterTitles.length; i++) {
+                        const title = chapterTitles[i];
+                        // 如果标题在视口上方或视口内靠上位置
+                        if (title.offsetTop <= content.scrollTop + 100) {
+                            activeChapterIndex = i;
+                        } else {
+                            // 标题在视口下方，说明上一个是当前章节
+                            break;
+                        }
                     }
-                });
 
-                // 转回数组并按时间排序
-                const mergedHistory = Array.from(historyMap.values())
-                    .sort((a, b) => b.timestamp - a.timestamp);
-
-                localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
-                updateHistoryDisplay();
-            }
-        }).catch(err => console.error('加载云端历史记录失败:', err));
-
-        // 更新历史记录显示
-        updateHistoryDisplay();
-
-        // 加载配置
-        loadConfig().catch(err => console.error('配置加载失败:', err));
-
-        // 添加滚动监听，用于在滚动模式下实时保存进度
-        const content = document.getElementById('content');
-        content.addEventListener('scroll', debounce(function () {
-            if (pageMode === 'scroll' && chapters.length > 0) {
-                const chapterTitles = content.querySelectorAll('.chapter-title');
-                let activeChapterIndex = 0;
-
-                // 找到当前视口顶部的章节
-                // 优化：二分查找或从当前章节附近查找会更快，但这里简单遍历也行，因为章节数通常不会太多
-                // 为了性能，我们可以假设用户不会瞬间跳跃太远，从 currentChapter 开始搜索
-
-                // 简单遍历所有章节标题找到当前可见的
-                // 注意：chapterTitles 是 NodeList
-                for (let i = 0; i < chapterTitles.length; i++) {
-                    const title = chapterTitles[i];
-                    // 如果标题在视口上方或视口内靠上位置
-                    if (title.offsetTop <= content.scrollTop + 100) {
-                        activeChapterIndex = i;
-                    } else {
-                        // 标题在视口下方，说明上一个是当前章节
-                        break;
+                    // 更新当前章节
+                    if (activeChapterIndex !== currentChapter) {
+                        currentChapter = activeChapterIndex;
                     }
+
+                    // 计算当前章节内的进度（估算页码）
+                    const currentTitle = chapterTitles[activeChapterIndex];
+                    // 下一个章节标题，如果没有则是内容底部
+                    const nextTitle = chapterTitles[activeChapterIndex + 1];
+
+                    const chapterStart = currentTitle.offsetTop;
+                    const chapterEnd = nextTitle ? nextTitle.offsetTop : content.scrollHeight;
+                    const chapterHeight = chapterEnd - chapterStart;
+
+                    // 当前滚动位置相对于章节顶部的偏移
+                    const scrollOffset = content.scrollTop - chapterStart;
+
+                    if (chapterHeight > 0) {
+                        // 计算进度比例 (0.0 - 1.0)
+                        const progress = Math.max(0, Math.min(1, scrollOffset / chapterHeight));
+
+                        const chapterContent = chapters[activeChapterIndex].content;
+                        const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
+
+                        // 更新 currentPage
+                        currentPage = Math.floor(progress * totalPages);
+                    }
+
+                    // 保存进度 (debounce 确保不会频繁写入)
+                    saveProgress();
                 }
-
-                // 更新当前章节
-                if (activeChapterIndex !== currentChapter) {
-                    currentChapter = activeChapterIndex;
-                }
-
-                // 计算当前章节内的进度（估算页码）
-                const currentTitle = chapterTitles[activeChapterIndex];
-                // 下一个章节标题，如果没有则是内容底部
-                const nextTitle = chapterTitles[activeChapterIndex + 1];
-
-                const chapterStart = currentTitle.offsetTop;
-                const chapterEnd = nextTitle ? nextTitle.offsetTop : content.scrollHeight;
-                const chapterHeight = chapterEnd - chapterStart;
-
-                // 当前滚动位置相对于章节顶部的偏移
-                const scrollOffset = content.scrollTop - chapterStart;
-
-                if (chapterHeight > 0) {
-                    // 计算进度比例 (0.0 - 1.0)
-                    const progress = Math.max(0, Math.min(1, scrollOffset / chapterHeight));
-
-                    const chapterContent = chapters[activeChapterIndex].content;
-                    const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
-
-                    // 更新 currentPage
-                    currentPage = Math.floor(progress * totalPages);
-                }
-
-                // 保存进度 (debounce 确保不会频繁写入)
-                saveProgress();
-            }
-        }, 500));
+            }, 500));
         }
 
         // 尝试立即初始化（如果脚本在body底部）
