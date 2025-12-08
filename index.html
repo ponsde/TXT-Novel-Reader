@@ -207,6 +207,17 @@
     </div>
 
     <div class="reader-container">
+        <!-- 移动端顶部栏 -->
+        <div class="mobile-top-bar controls-hidden" id="mobile-top-bar">
+            <div class="nav-btn" onclick="backToHome()">
+                <i class="icon">⌂</i>
+            </div>
+            <div class="nav-title" id="mobile-book-title">优雅阅读器</div>
+            <div class="nav-btn" id="mobile-library-btn-top">
+                <i class="icon">📚</i>
+            </div>
+        </div>
+
         <div class="reader-header">
             <h1 id="book-title">优雅阅读器</h1>
         </div>
@@ -220,18 +231,18 @@
             </div>
 
             <div class="reader-sidebar">
-                <div class="setting-item">
+                <div class="setting-item mobile-hidden">
                     <label for="file-input" class="setting-item">
                         <i class="icon">📂</i>
                         <span>选择</span>
                     </label>
                     <input type="file" id="file-input" accept=".txt" style="display: none;">
                 </div>
-                <div class="setting-item" id="random-book-btn">
+                <div class="setting-item mobile-hidden" id="random-book-btn">
                     <i class="icon">🎲</i>
                     <span>随机</span>
                 </div>
-                <div class="setting-item" id="library-btn">
+                <div class="setting-item mobile-hidden" id="library-btn">
                     <i class="icon">📚</i>
                     <span>书库</span>
                 </div>
@@ -259,7 +270,7 @@
                     <i class="icon">🗑️</i>
                     <span>清存</span>
                 </div>
-                <div class="setting-item" onclick="backToHome()">
+                <div class="setting-item mobile-hidden" onclick="backToHome()">
                     <i class="icon">⌂</i>
                     <span>主页</span>
                 </div>
@@ -1999,12 +2010,16 @@
             // 更新标题显示当前章节或页码
             if (chapters.length > 0 && chapters[currentChapter]) {
                 const chapterTitle = chapters[currentChapter].title;
-                document.getElementById('book-title').textContent =
-                    `${currentFileName.replace('.txt', '')} - ${chapterTitle}`;
+                const titleText = `${currentFileName.replace('.txt', '')} - ${chapterTitle}`;
+                document.getElementById('book-title').textContent = titleText;
+                const mobileTitle = document.getElementById('mobile-book-title');
+                if (mobileTitle) mobileTitle.textContent = titleText;
             } else if (currentContent && currentContent.length > 0) {
                 // 无章节时显示页码
-                document.getElementById('book-title').textContent =
-                    `${currentFileName.replace('.txt', '')} - 第${currentPage + 1}/${currentContent.length}页`;
+                const titleText = `${currentFileName.replace('.txt', '')} - 第${currentPage + 1}/${currentContent.length}页`;
+                document.getElementById('book-title').textContent = titleText;
+                const mobileTitle = document.getElementById('mobile-book-title');
+                if (mobileTitle) mobileTitle.textContent = titleText;
             }
         }
 
@@ -2318,7 +2333,12 @@
                     // 只有在打开书籍时才启用沉浸式切换
                     if (currentFileName) {
                         const sidebar = document.querySelector('.reader-sidebar');
+                        const topBar = document.getElementById('mobile-top-bar');
+
                         sidebar.classList.toggle('controls-hidden');
+                        if (topBar) {
+                            topBar.classList.toggle('controls-hidden');
+                        }
 
                         // 同时切换目录和设置面板的显示状态
                         if (sidebar.classList.contains('controls-hidden')) {
@@ -2327,12 +2347,11 @@
                         }
                     }
                     return;
-                }
-
-                // 如果是滚动模式，不处理翻页手势
+                }                // 如果是滚动模式，不处理翻页手势
                 if (pageMode === 'scroll') return;
 
-                // 水平滑动距离大于50px，且大于垂直滑动距离（防止斜着滑误触）
+                // 移除左右滑动翻页功能，防止误触
+                /*
                 if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
                     if (diffX > 0) {
                         // 向右滑 -> 上一页
@@ -2342,6 +2361,7 @@
                         nextPage();
                     }
                 }
+                */
             }, { passive: true });
 
             // 绑定事件监听
@@ -2397,115 +2417,123 @@
             }
 
             const libraryButton = document.getElementById('library-btn');
+            const mobileLibraryButton = document.getElementById('mobile-library-btn-top');
+
+            const handleLibraryClick = async function (e) {
+                console.log('Library button clicked');
+                if (e.ctrlKey) {
+                    // 按住 Ctrl 键，设置书库路径
+                    await setLibraryPath();
+                } else {
+                    // 普通点击，显示书库
+                    showServerLibrary();
+                }
+            };
+
             if (libraryButton) {
-                libraryButton.onclick = async function (e) {
-                    console.log('Library button clicked');
-                    if (e.ctrlKey) {
-                        // 按住 Ctrl 键，设置书库路径
-                        await setLibraryPath();
-                    } else {
-                        // 普通点击，显示书库
-                        showServerLibrary();
-                    }
-                };
-            } else {
-                console.error('Library button not found');
+                libraryButton.onclick = handleLibraryClick;
             }
+            if (mobileLibraryButton) {
+                mobileLibraryButton.onclick = handleLibraryClick;
+            }
+        } else {
+            console.error('Library button not found');
+        }
 
-            // 应用存储的字体设置
-            applyStoredSettings();
+        // 应用存储的字体设置
+        applyStoredSettings();
 
-            // 尝试从云端加载历史记录并合并
-            ipcRenderer.invoke('load-history').then(cloudHistory => {
-                if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
-                    let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
+        // 尝试从云端加载历史记录并合并
+        ipcRenderer.invoke('load-history').then(cloudHistory => {
+            if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
+                let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
 
-                    // 合并策略：以时间戳为准，合并两个列表
-                    // 创建一个 Map 以 fileName 为键
-                    const historyMap = new Map();
+                // 合并策略：以时间戳为准，合并两个列表
+                // 创建一个 Map 以 fileName 为键
+                const historyMap = new Map();
 
-                    // 先放入本地记录
-                    localHistory.forEach(item => historyMap.set(item.fileName, item));
+                // 先放入本地记录
+                localHistory.forEach(item => historyMap.set(item.fileName, item));
 
-                    // 再放入云端记录，如果时间戳更新则覆盖
-                    cloudHistory.forEach(item => {
-                        const existing = historyMap.get(item.fileName);
-                        if (!existing || (item.timestamp > existing.timestamp)) {
-                            historyMap.set(item.fileName, item);
-                        }
-                    });
+                // 再放入云端记录，如果时间戳更新则覆盖
+                cloudHistory.forEach(item => {
+                    const existing = historyMap.get(item.fileName);
+                    if (!existing || (item.timestamp > existing.timestamp)) {
+                        historyMap.set(item.fileName, item);
+                    }
+                });
 
-                    // 转回数组并按时间排序
-                    const mergedHistory = Array.from(historyMap.values())
-                        .sort((a, b) => b.timestamp - a.timestamp);
+                // 转回数组并按时间排序
+                const mergedHistory = Array.from(historyMap.values())
+                    .sort((a, b) => b.timestamp - a.timestamp);
 
-                    localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
-                    updateHistoryDisplay();
+                localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
+                updateHistoryDisplay();
+            }
+        }).catch(err => console.error('加载云端历史记录失败:', err));
+
+        // 更新历史记录显示
+        updateHistoryDisplay();
+
+        // 加载配置
+        loadConfig().catch(err => console.error('配置加载失败:', err));
+
+        // 添加滚动监听，用于在滚动模式下实时保存进度
+        const content = document.getElementById('content');
+        content.addEventListener('scroll', debounce(function () {
+            if (pageMode === 'scroll' && chapters.length > 0) {
+                const chapterTitles = content.querySelectorAll('.chapter-title');
+                let activeChapterIndex = 0;
+
+                // 找到当前视口顶部的章节
+                // 优化：二分查找或从当前章节附近查找会更快，但这里简单遍历也行，因为章节数通常不会太多
+                // 为了性能，我们可以假设用户不会瞬间跳跃太远，从 currentChapter 开始搜索
+
+                // 简单遍历所有章节标题找到当前可见的
+                // 注意：chapterTitles 是 NodeList
+                for (let i = 0; i < chapterTitles.length; i++) {
+                    const title = chapterTitles[i];
+                    // 如果标题在视口上方或视口内靠上位置
+                    if (title.offsetTop <= content.scrollTop + 100) {
+                        activeChapterIndex = i;
+                    } else {
+                        // 标题在视口下方，说明上一个是当前章节
+                        break;
+                    }
                 }
-            }).catch(err => console.error('加载云端历史记录失败:', err));
 
-            // 更新历史记录显示
-            updateHistoryDisplay();
-
-            // 加载配置
-            loadConfig().catch(err => console.error('配置加载失败:', err));
-
-            // 添加滚动监听，用于在滚动模式下实时保存进度
-            const content = document.getElementById('content');
-            content.addEventListener('scroll', debounce(function () {
-                if (pageMode === 'scroll' && chapters.length > 0) {
-                    const chapterTitles = content.querySelectorAll('.chapter-title');
-                    let activeChapterIndex = 0;
-
-                    // 找到当前视口顶部的章节
-                    // 优化：二分查找或从当前章节附近查找会更快，但这里简单遍历也行，因为章节数通常不会太多
-                    // 为了性能，我们可以假设用户不会瞬间跳跃太远，从 currentChapter 开始搜索
-
-                    // 简单遍历所有章节标题找到当前可见的
-                    // 注意：chapterTitles 是 NodeList
-                    for (let i = 0; i < chapterTitles.length; i++) {
-                        const title = chapterTitles[i];
-                        // 如果标题在视口上方或视口内靠上位置
-                        if (title.offsetTop <= content.scrollTop + 100) {
-                            activeChapterIndex = i;
-                        } else {
-                            // 标题在视口下方，说明上一个是当前章节
-                            break;
-                        }
-                    }
-
-                    // 更新当前章节
-                    if (activeChapterIndex !== currentChapter) {
-                        currentChapter = activeChapterIndex;
-                    }
-
-                    // 计算当前章节内的进度（估算页码）
-                    const currentTitle = chapterTitles[activeChapterIndex];
-                    // 下一个章节标题，如果没有则是内容底部
-                    const nextTitle = chapterTitles[activeChapterIndex + 1];
-
-                    const chapterStart = currentTitle.offsetTop;
-                    const chapterEnd = nextTitle ? nextTitle.offsetTop : content.scrollHeight;
-                    const chapterHeight = chapterEnd - chapterStart;
-
-                    // 当前滚动位置相对于章节顶部的偏移
-                    const scrollOffset = content.scrollTop - chapterStart;
-
-                    if (chapterHeight > 0) {
-                        // 计算进度比例 (0.0 - 1.0)
-                        const progress = Math.max(0, Math.min(1, scrollOffset / chapterHeight));
-
-                        const chapterContent = chapters[activeChapterIndex].content;
-                        const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
-
-                        // 更新 currentPage
-                        currentPage = Math.floor(progress * totalPages);
-                    }
-
-                    // 保存进度 (debounce 确保不会频繁写入)
-                    saveProgress();
+                // 更新当前章节
+                if (activeChapterIndex !== currentChapter) {
+                    currentChapter = activeChapterIndex;
                 }
-            }, 500));
+
+                // 计算当前章节内的进度（估算页码）
+                const currentTitle = chapterTitles[activeChapterIndex];
+                // 下一个章节标题，如果没有则是内容底部
+                const nextTitle = chapterTitles[activeChapterIndex + 1];
+
+                const chapterStart = currentTitle.offsetTop;
+                const chapterEnd = nextTitle ? nextTitle.offsetTop : content.scrollHeight;
+                const chapterHeight = chapterEnd - chapterStart;
+
+                // 当前滚动位置相对于章节顶部的偏移
+                const scrollOffset = content.scrollTop - chapterStart;
+
+                if (chapterHeight > 0) {
+                    // 计算进度比例 (0.0 - 1.0)
+                    const progress = Math.max(0, Math.min(1, scrollOffset / chapterHeight));
+
+                    const chapterContent = chapters[activeChapterIndex].content;
+                    const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
+
+                    // 更新 currentPage
+                    currentPage = Math.floor(progress * totalPages);
+                }
+
+                // 保存进度 (debounce 确保不会频繁写入)
+                saveProgress();
+            }
+        }, 500));
         }
 
         // 尝试立即初始化（如果脚本在body底部）
@@ -2876,6 +2904,8 @@
 
             // 重置标题
             document.getElementById('book-title').textContent = '优雅阅读器';
+            const mobileTitle = document.getElementById('mobile-book-title');
+            if (mobileTitle) mobileTitle.textContent = '优雅阅读器';
 
             updateHistoryDisplay();
 
@@ -3212,7 +3242,10 @@
                         window.waitingForHistory = false;
 
                         // 更新UI
-                        document.getElementById('book-title').textContent = fileName.replace('.txt', '');
+                        const titleText = fileName.replace('.txt', '');
+                        document.getElementById('book-title').textContent = titleText;
+                        const mobileTitle = document.getElementById('mobile-book-title');
+                        if (mobileTitle) mobileTitle.textContent = titleText;
                         document.getElementById('content').style.display = 'block';
 
                         updateChapterList();
@@ -3357,7 +3390,10 @@
 
                     // 只有在非后台加载时才更新标题，防止闪烁
                     if (!options.isBackground) {
-                        document.getElementById('book-title').textContent = fileName.replace('.txt', '');
+                        const titleText = fileName.replace('.txt', '');
+                        document.getElementById('book-title').textContent = titleText;
+                        const mobileTitle = document.getElementById('mobile-book-title');
+                        if (mobileTitle) mobileTitle.textContent = titleText;
                         document.querySelector('.loading-message').textContent = '正在分析章节结构...';
                     }
 
