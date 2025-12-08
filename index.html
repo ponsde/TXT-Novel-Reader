@@ -1686,7 +1686,13 @@
         // 选择自定义路径函数 - 仅选择路径，不加载书籍
         async function selectCustomPath() {
             try {
-                const newPath = await ipcRenderer.invoke('select-directory');
+                let newPath;
+                if (isWebMode) {
+                    newPath = await showRemotePathSelector();
+                } else {
+                    newPath = await ipcRenderer.invoke('select-directory');
+                }
+
                 if (newPath) {
                     // 保存新路径作为默认路径
                     baseDir = newPath;
@@ -1698,18 +1704,33 @@
 
                     // 保存配置
                     await ipcRenderer.invoke('save-config', {
-                        baseDir: newPath,
+                        baseDir: baseDir,
                         searchDirs: searchDirs
                     });
 
-                    showNotification(`已设置新路径: ${newPath}`);
+                    showNotification(`已将随机阅读路径设置为: ${baseDir}`);
+                    return newPath;
                 }
-                return newPath;
             } catch (error) {
-                console.error('选择路径失败:', error);
-                alert('选择路径失败: ' + error.message);
-                return null;
+                console.error('选择自定义路径失败:', error);
+                if (error !== 'cancelled') {
+                    showNotification('选择路径失败: ' + error.message);
+                }
             }
+            return null;
+        }
+        baseDir: newPath,
+            searchDirs: searchDirs
+                    });
+
+        showNotification(`已设置新路径: ${newPath}`);
+                }
+        return newPath;
+            } catch (error) {
+            console.error('选择路径失败:', error);
+            alert('选择路径失败: ' + error.message);
+            return null;
+        }
         }
 
         // 更新进度条
@@ -2390,10 +2411,17 @@
                     return; // 选择完路径后直接返回，不加载书籍
                 }
 
+                // 检查 baseDir 是否有效
+                if (!baseDir) {
+                    showNotification('请先设置随机阅读路径 (按住 Ctrl 点击此按钮)');
+                    return;
+                }
+
                 // 显示加载中状态
                 document.getElementById('loading-overlay').style.display = 'flex';
 
                 // 获取随机文件
+                console.log('正在获取随机文件，路径:', baseDir);
                 const filePath = await ipcRenderer.invoke('get-random-file', baseDir);
                 if (!filePath) {
                     throw new Error('没有找到任何 TXT 文件');
