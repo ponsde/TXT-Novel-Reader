@@ -8,6 +8,57 @@
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/gbk.js@0.3.0/dist/gbk.min.js"></script>
     <script>
+        // 简单的 IndexedDB 封装，用于 Web 模式下的缓存
+        class SimpleDB {
+            constructor(dbName, storeName) {
+                this.dbName = dbName;
+                this.storeName = storeName;
+                this.db = null;
+            }
+
+            async open() {
+                if (this.db) return this.db;
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(this.dbName, 1);
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains(this.storeName)) {
+                            db.createObjectStore(this.storeName);
+                        }
+                    };
+                    request.onsuccess = (event) => {
+                        this.db = event.target.result;
+                        resolve(this.db);
+                    };
+                    request.onerror = (event) => reject(event.target.error);
+                });
+            }
+
+            async get(key) {
+                await this.open();
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.storeName], 'readonly');
+                    const store = transaction.objectStore(this.storeName);
+                    const request = store.get(key);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            async set(key, value) {
+                await this.open();
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.storeName], 'readwrite');
+                    const store = transaction.objectStore(this.storeName);
+                    const request = store.put(value, key);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+        }
+
+        const webBookCache = new SimpleDB('BookCacheDB', 'chapters');
+
         // 安全地引入 Electron
         let ipcRenderer;
         let pathModule;
@@ -39,6 +90,62 @@
 
                             const arrayBuffer = await response.arrayBuffer();
                             return new Uint8Array(arrayBuffer);
+                        }
+
+                        // Web 模式下的缓存检查
+                        if (channel === 'check-book-cache') {
+                            const filePath = args[0];
+                            // 1. 获取服务器文件状态
+                            const statResponse = await fetch('/api/invoke', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] })
+                            });
+                            const statResult = await statResponse.json();
+                            const stats = statResult.data;
+
+                            if (!stats) return null;
+
+                            // 2. 生成缓存键 (filePath + size + mtime)
+                            const cacheKey = `${filePath}-${stats.size}-${stats.mtime}`;
+
+                            // 3. 检查 IndexedDB
+                            try {
+                                const cachedData = await webBookCache.get(cacheKey);
+                                return cachedData || null;
+                            } catch (e) {
+                                console.error('读取 Web 缓存失败:', e);
+                                return null;
+                            }
+                        }
+
+                        // Web 模式下的缓存保存
+                        if (channel === 'save-book-cache') {
+                            const filePath = args[0];
+                            const data = args[1];
+
+                            // 1. 获取服务器文件状态
+                            const statResponse = await fetch('/api/invoke', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] })
+                            });
+                            const statResult = await statResponse.json();
+                            const stats = statResult.data;
+
+                            if (!stats) return false;
+
+                            // 2. 生成缓存键
+                            const cacheKey = `${filePath}-${stats.size}-${stats.mtime}`;
+
+                            // 3. 保存到 IndexedDB
+                            try {
+                                await webBookCache.set(cacheKey, data);
+                                return true;
+                            } catch (e) {
+                                console.error('保存 Web 缓存失败:', e);
+                                return false;
+                            }
                         }
 
                         const response = await fetch('/api/invoke', {

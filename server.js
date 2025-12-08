@@ -269,6 +269,19 @@ const apiHandlers = {
         return await getDirectoryTree(libraryDir);
     },
 
+    'get-file-stat': async (args) => {
+        const filePath = args[0];
+        try {
+            const stats = await fsPromises.stat(filePath);
+            return {
+                size: stats.size,
+                mtime: stats.mtime.getTime()
+            };
+        } catch (error) {
+            return null;
+        }
+    },
+
     // 列出指定目录下的文件夹（用于Web端选择路径）
     'list-directory': async (args) => {
         let dirPath = args[0];
@@ -422,8 +435,20 @@ const server = http.createServer(async (req, res) => {
                     const stat = await fsPromises.stat(filePath);
                     const acceptEncoding = req.headers['accept-encoding'] || '';
 
-                    if (acceptEncoding.includes('gzip')) {
-                        // 使用 GZIP 压缩传输
+                    // 优先使用 Brotli (br) 压缩，压缩率更高
+                    if (acceptEncoding.includes('br')) {
+                        res.writeHead(200, {
+                            'Content-Type': 'application/octet-stream',
+                            'Content-Encoding': 'br'
+                        });
+
+                        const brotli = zlib.createBrotliCompress();
+                        const stream = fs.createReadStream(filePath);
+                        stream.pipe(brotli).pipe(res);
+
+                        stream.on('error', (error) => console.error('Stream error:', error));
+                    } else if (acceptEncoding.includes('gzip')) {
+                        // 回退到 GZIP
                         res.writeHead(200, {
                             'Content-Type': 'application/octet-stream',
                             'Content-Encoding': 'gzip'
@@ -433,11 +458,9 @@ const server = http.createServer(async (req, res) => {
                         const stream = fs.createReadStream(filePath);
                         stream.pipe(gzip).pipe(res);
 
-                        stream.on('error', (error) => {
-                            console.error('Stream error:', error);
-                        });
+                        stream.on('error', (error) => console.error('Stream error:', error));
                     } else {
-                        // 不支持压缩，直接传输
+                        // 不支持压缩
                         res.writeHead(200, {
                             'Content-Type': 'application/octet-stream',
                             'Content-Length': stat.size
