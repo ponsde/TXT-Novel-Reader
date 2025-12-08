@@ -679,7 +679,8 @@ body.dark-mode .setting-group span {
         left: 0;
         right: 0;
         width: 100%;
-        height: 60px;
+        height: 70px;
+        /* 增加高度 */
         transform: none;
         display: flex;
         flex-direction: row;
@@ -687,109 +688,137 @@ body.dark-mode .setting-group span {
         align-items: center;
         padding: 0;
         border-radius: 15px 15px 0 0;
-        /* 只有顶部圆角 */
         box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
         overflow-x: auto;
-        /* 允许横向滚动 */
         overflow-y: hidden;
         white-space: nowrap;
         background: rgba(255, 255, 255, 0.98);
         backdrop-filter: blur(10px);
+        transition: transform 0.3s ease;
+        /* 添加过渡动画 */
+        z-index: 1000;
+    }
+
+    /* 隐藏状态 */
+    .reader-sidebar.controls-hidden {
+        transform: translateY(100%);
     }
 
     .setting-item {
         height: 100%;
         width: auto;
-        min-width: 50px;
+        min-width: 60px;
+        /* 增加宽度 */
         flex: 1;
         margin-bottom: 0;
         padding: 5px 0;
     }
 
     .setting-item .icon {
-        font-size: 20px;
-        margin-bottom: 2px;
+        font-size: 24px;
+        /* 增大图标 */
+        margin-bottom: 4px;
     }
 
     .setting-item span {
-        font-size: 10px;
+        font-size: 12px;
+        /* 增大文字 */
         transform: none;
         display: block;
     }
 
-    /* 调整目录列表位置 */
-    .chapter-list {
-        position: fixed;
-        top: auto;
-        bottom: 70px;
-        /* 在导航栏上方 */
-        right: 10px;
-        left: 10px;
-        width: auto;
-        max-height: 60vh;
-        transform: none;
-    }
+    height: 100%;
+    width: auto;
+    min-width: 50px;
+    flex: 1;
+    margin-bottom: 0;
+    padding: 5px 0;
+}
 
-    /* 调整设置面板位置 */
-    .settings-panel {
-        width: 90%;
-        bottom: 70px;
-        top: auto;
-        transform: translateX(-50%);
-    }
+.setting-item .icon {
+    font-size: 20px;
+    margin-bottom: 2px;
+}
 
-    .settings-panel.hidden {
-        transform: translateX(-50%) scale(0.9);
-    }
+.setting-item span {
+    font-size: 10px;
+    transform: none;
+    display: block;
+}
 
-    /* 隐藏一些不常用的按钮以节省空间，或者放入更多菜单 */
-    /* 这里我们保留所有按钮，因为支持横向滚动 */
+/* 调整目录列表位置 */
+.chapter-list {
+    position: fixed;
+    top: auto;
+    bottom: 70px;
+    /* 在导航栏上方 */
+    right: 10px;
+    left: 10px;
+    width: auto;
+    max-height: 60vh;
+    transform: none;
+}
 
-    /* 优化阅读控制栏 */
-    .reader-controls {
-        padding: 15px 10px;
-        margin-bottom: 10px;
-    }
+/* 调整设置面板位置 */
+.settings-panel {
+    width: 90%;
+    bottom: 70px;
+    top: auto;
+    transform: translateX(-50%);
+}
 
-    .navigation-buttons button {
-        padding: 8px 15px;
-        margin: 0 5px;
-        font-size: 14px;
-    }
+.settings-panel.hidden {
+    transform: translateX(-50%) scale(0.9);
+}
 
-    #page-info {
-        margin: 0 5px;
-        font-size: 14px;
-        min-width: auto;
-    }
+/* 隐藏一些不常用的按钮以节省空间，或者放入更多菜单 */
+/* 这里我们保留所有按钮，因为支持横向滚动 */
 
-    /* 移动端历史记录样式优化 */
-    .history-list {
-        padding: 10px 0;
-    }
+/* 优化阅读控制栏 */
+.reader-controls {
+    padding: 15px 10px;
+    margin-bottom: 10px;
+}
 
-    .history-item {
-        padding: 12px;
-        margin-bottom: 10px;
-        border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    }
+.navigation-buttons button {
+    padding: 8px 15px;
+    margin: 0 5px;
+    font-size: 14px;
+}
 
-    .history-title {
-        font-size: 16px;
-        font-weight: 600;
-    }
+#page-info {
+    margin: 0 5px;
+    font-size: 14px;
+    min-width: auto;
+}
 
-    .history-date,
-    .history-progress {
-        font-size: 12px;
-    }
+/* 移动端历史记录样式优化 */
+.history-list {
+    padding: 10px 0;
+}
 
-    .history-delete {
-        width: 30px;
-        height: 30px;
-        font-size: 18px;
-    }
+.history-item {
+    padding: 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.history-title {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.history-date,
+.history-progress {
+    font-size: 12px;
+}
+
+.history-delete {
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+}
 }
 
 /* 夜间模式适配 */

@@ -2310,11 +2310,27 @@
                 const touchEndX = e.changedTouches[0].screenX;
                 const touchEndY = e.changedTouches[0].screenY;
 
-                // 如果是滚动模式，不处理翻页手势
-                if (pageMode === 'scroll') return;
-
                 const diffX = touchEndX - touchStartX;
                 const diffY = touchEndY - touchStartY;
+
+                // 点击判定 (滑动距离很小)
+                if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
+                    // 只有在打开书籍时才启用沉浸式切换
+                    if (currentFileName) {
+                        const sidebar = document.querySelector('.reader-sidebar');
+                        sidebar.classList.toggle('controls-hidden');
+
+                        // 同时切换目录和设置面板的显示状态
+                        if (sidebar.classList.contains('controls-hidden')) {
+                            document.getElementById('chapter-list').classList.add('hidden');
+                            document.getElementById('font-settings-panel').classList.add('hidden');
+                        }
+                    }
+                    return;
+                }
+
+                // 如果是滚动模式，不处理翻页手势
+                if (pageMode === 'scroll') return;
 
                 // 水平滑动距离大于50px，且大于垂直滑动距离（防止斜着滑误触）
                 if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
@@ -3240,6 +3256,11 @@
 
                         document.querySelector('.loading-message').textContent = '加载完成';
                         document.getElementById('loading-overlay').style.display = 'none';
+
+                        // 移动端自动进入沉浸模式
+                        if (window.innerWidth <= 768) {
+                            document.querySelector('.reader-sidebar').classList.add('controls-hidden');
+                        }
                         return;
                     }
                 } catch (cacheError) {
