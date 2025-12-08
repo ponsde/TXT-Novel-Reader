@@ -406,6 +406,49 @@ const server = http.createServer(async (req, res) => {
 
     const parsedUrl = url.parse(req.url, true);
 
+    // 优化的文件读取接口 (流式传输)
+    if (parsedUrl.pathname === '/api/raw-read' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            try {
+                const { filePath } = JSON.parse(body);
+
+                // 简单的安全检查
+                // 注意：这里应该有更严格的路径检查，但为了保持与原 read-file 逻辑一致（允许读取任意文件），我们暂时只做基本错误处理
+
+                try {
+                    const stat = await fsPromises.stat(filePath);
+
+                    res.writeHead(200, {
+                        'Content-Type': 'application/octet-stream',
+                        'Content-Length': stat.size
+                    });
+
+                    const stream = fs.createReadStream(filePath);
+                    stream.pipe(res);
+
+                    stream.on('error', (error) => {
+                        console.error('Stream error:', error);
+                        if (!res.headersSent) {
+                            res.writeHead(500);
+                            res.end(JSON.stringify({ error: 'File read error' }));
+                        }
+                    });
+                } catch (error) {
+                    console.error('File access error:', error);
+                    res.writeHead(404, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: 'File not found or inaccessible' }));
+                }
+            } catch (error) {
+                console.error('API Error:', error);
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: error.message }));
+            }
+        });
+        return;
+    }
+
     // API 路由
     if (parsedUrl.pathname === '/api/invoke' && req.method === 'POST') {
         let body = '';

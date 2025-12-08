@@ -25,6 +25,22 @@
                 invoke: async (channel, ...args) => {
                     console.log(`[Web API] 调用: ${channel}`, args);
                     try {
+                        // 针对 read-file 使用优化的流式接口
+                        if (channel === 'read-file') {
+                            const response = await fetch('/api/raw-read', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ filePath: args[0] })
+                            });
+
+                            if (!response.ok) {
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
+
+                            const arrayBuffer = await response.arrayBuffer();
+                            return new Uint8Array(arrayBuffer);
+                        }
+
                         const response = await fetch('/api/invoke', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
