@@ -2036,22 +2036,27 @@
             }
         }
 
-        // 在页面加载时显示历史记录并加载配置
-        document.addEventListener('DOMContentLoaded', async function () {
-            // 立即绑定事件监听，防止配置加载阻塞导致按钮无响应
+        // 初始化函数
+        function initApp() {
+            console.log('App initializing...');
 
-            // 添加随机按钮的点击事件监听
+            // 绑定事件监听
             const randomButton = document.getElementById('random-book-btn');
             if (randomButton) {
-                randomButton.addEventListener('click', function (e) {
+                // 使用 onclick 属性以确保覆盖旧的事件处理，避免重复绑定
+                randomButton.onclick = function (e) {
+                    console.log('Random button clicked');
                     // 检查是否按住了Ctrl键
                     const useCustomPath = e.ctrlKey;
                     loadRandomBook(useCustomPath);
-                });
+                };
 
-                // 添加右键菜单
-                randomButton.addEventListener('contextmenu', function (e) {
+                // 右键菜单
+                randomButton.oncontextmenu = function (e) {
                     e.preventDefault();
+                    // 移除已存在的菜单
+                    const existingMenu = document.getElementById('random-context-menu');
+                    if (existingMenu) existingMenu.remove();
 
                     // 创建右键菜单
                     const menu = document.createElement('div');
@@ -2074,19 +2079,23 @@
                     document.body.appendChild(menu);
 
                     // 点击其他地方关闭菜单
-                    document.addEventListener('click', function closeMenu() {
+                    function closeMenu() {
                         if (menu && menu.parentNode) {
                             menu.parentNode.removeChild(menu);
                         }
                         document.removeEventListener('click', closeMenu);
-                    });
-                });
+                    }
+                    // 延迟绑定关闭事件，防止立即触发
+                    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+                };
+            } else {
+                console.error('Random button not found');
             }
 
-            // 添加书库按钮的点击事件监听
             const libraryButton = document.getElementById('library-btn');
             if (libraryButton) {
-                libraryButton.addEventListener('click', async function (e) {
+                libraryButton.onclick = async function (e) {
+                    console.log('Library button clicked');
                     if (e.ctrlKey) {
                         // 按住 Ctrl 键，设置书库路径
                         await setLibraryPath();
@@ -2094,7 +2103,9 @@
                         // 普通点击，显示书库
                         showServerLibrary();
                     }
-                });
+                };
+            } else {
+                console.error('Library button not found');
             }
 
             // 应用存储的字体设置
@@ -2102,11 +2113,16 @@
             // 更新历史记录显示
             updateHistoryDisplay();
 
-            // 最后加载配置（异步执行，不阻塞界面）
+            // 加载配置
             loadConfig().catch(err => console.error('配置加载失败:', err));
-        });
+        }
 
-        // 设置书库路径
+        // 尝试立即初始化（如果脚本在body底部）
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initApp);
+        } else {
+            initApp();
+        }        // 设置书库路径
         async function setLibraryPath() {
             try {
                 let newPath;
