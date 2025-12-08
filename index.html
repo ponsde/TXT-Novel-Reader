@@ -5,6 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>优雅阅读器</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#ffffff">
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdn.jsdelivr.net/npm/gbk.js@0.3.0/dist/gbk.min.js"></script>
     <script>
@@ -2270,6 +2272,61 @@
 
         function initApp() {
             console.log('App initializing...');
+
+            // 屏幕常亮 (Wake Lock API)
+            let wakeLock = null;
+            const requestWakeLock = async () => {
+                try {
+                    if ('wakeLock' in navigator) {
+                        wakeLock = await navigator.wakeLock.request('screen');
+                        console.log('屏幕常亮已激活');
+                    }
+                } catch (err) {
+                    console.log('无法激活屏幕常亮:', err);
+                }
+            };
+
+            // 页面可见性改变时重新申请
+            document.addEventListener('visibilitychange', async () => {
+                if (wakeLock !== null && document.visibilityState === 'visible') {
+                    await requestWakeLock();
+                }
+            });
+
+            // 初始化时申请
+            requestWakeLock();
+
+            // 触摸手势支持 (左右滑动翻页)
+            let touchStartX = 0;
+            let touchStartY = 0;
+            const contentArea = document.getElementById('content');
+
+            contentArea.addEventListener('touchstart', e => {
+                touchStartX = e.changedTouches[0].screenX;
+                touchStartY = e.changedTouches[0].screenY;
+            }, { passive: true });
+
+            contentArea.addEventListener('touchend', e => {
+                const touchEndX = e.changedTouches[0].screenX;
+                const touchEndY = e.changedTouches[0].screenY;
+
+                // 如果是滚动模式，不处理翻页手势
+                if (pageMode === 'scroll') return;
+
+                const diffX = touchEndX - touchStartX;
+                const diffY = touchEndY - touchStartY;
+
+                // 水平滑动距离大于50px，且大于垂直滑动距离（防止斜着滑误触）
+                if (Math.abs(diffX) > 50 && Math.abs(diffX) > Math.abs(diffY)) {
+                    if (diffX > 0) {
+                        // 向右滑 -> 上一页
+                        previousPage();
+                    } else {
+                        // 向左滑 -> 下一页
+                        nextPage();
+                    }
+                }
+            }, { passive: true });
 
             // 绑定事件监听
             const randomButton = document.getElementById('random-book-btn');
