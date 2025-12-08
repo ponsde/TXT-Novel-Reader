@@ -352,6 +352,15 @@
                         document.getElementById('loading-overlay').style.display = 'none';
                     }
                 } else if (chapters.length > 0) {
+                    // 保存到缓存
+                    if (window.currentFilePath) {
+                        ipcRenderer.invoke('save-book-cache', window.currentFilePath, { chapters: chapters })
+                            .then(success => {
+                                if (success) console.log('书籍缓存已保存');
+                            })
+                            .catch(err => console.error('保存缓存失败:', err));
+                    }
+
                     updateChapterList();
                     // 显示翻页按钮
                     document.querySelector('.navigation-buttons').style.display = 'flex';
@@ -2111,6 +2120,16 @@
         }
 
         // 初始化函数
+        function debounce(func, delay) {
+            let debounceTimer;
+            return function () {
+                const context = this;
+                const args = arguments;
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => func.apply(context, args), delay);
+            }
+        }
+
         function initApp() {
             console.log('App initializing...');
 
@@ -2219,6 +2238,63 @@
 
             // 加载配置
             loadConfig().catch(err => console.error('配置加载失败:', err));
+
+            // 添加滚动监听，用于在滚动模式下实时保存进度
+            const content = document.getElementById('content');
+            content.addEventListener('scroll', debounce(function () {
+                if (pageMode === 'scroll' && chapters.length > 0) {
+                    const chapterTitles = content.querySelectorAll('.chapter-title');
+                    let activeChapterIndex = 0;
+
+                    // 找到当前视口顶部的章节
+                    // 优化：二分查找或从当前章节附近查找会更快，但这里简单遍历也行，因为章节数通常不会太多
+                    // 为了性能，我们可以假设用户不会瞬间跳跃太远，从 currentChapter 开始搜索
+
+                    // 简单遍历所有章节标题找到当前可见的
+                    // 注意：chapterTitles 是 NodeList
+                    for (let i = 0; i < chapterTitles.length; i++) {
+                        const title = chapterTitles[i];
+                        // 如果标题在视口上方或视口内靠上位置
+                        if (title.offsetTop <= content.scrollTop + 100) {
+                            activeChapterIndex = i;
+                        } else {
+                            // 标题在视口下方，说明上一个是当前章节
+                            break;
+                        }
+                    }
+
+                    // 更新当前章节
+                    if (activeChapterIndex !== currentChapter) {
+                        currentChapter = activeChapterIndex;
+                    }
+
+                    // 计算当前章节内的进度（估算页码）
+                    const currentTitle = chapterTitles[activeChapterIndex];
+                    // 下一个章节标题，如果没有则是内容底部
+                    const nextTitle = chapterTitles[activeChapterIndex + 1];
+
+                    const chapterStart = currentTitle.offsetTop;
+                    const chapterEnd = nextTitle ? nextTitle.offsetTop : content.scrollHeight;
+                    const chapterHeight = chapterEnd - chapterStart;
+
+                    // 当前滚动位置相对于章节顶部的偏移
+                    const scrollOffset = content.scrollTop - chapterStart;
+
+                    if (chapterHeight > 0) {
+                        // 计算进度比例 (0.0 - 1.0)
+                        const progress = Math.max(0, Math.min(1, scrollOffset / chapterHeight));
+
+                        const chapterContent = chapters[activeChapterIndex].content;
+                        const totalPages = Math.ceil(chapterContent.length / wordsPerPage);
+
+                        // 更新 currentPage
+                        currentPage = Math.floor(progress * totalPages);
+                    }
+
+                    // 保存进度 (debounce 确保不会频繁写入)
+                    saveProgress();
+                }
+            }, 500));
         }
 
         // 尝试立即初始化（如果脚本在body底部）
@@ -2890,6 +2966,70 @@
             try {
                 document.getElementById('loading-overlay').style.display = 'flex';
                 document.querySelector('.loading-message').textContent = `正在加载: ${fileName}...`;
+
+                // 保存当前文件路径供后续使用
+                window.currentFilePath = filePath;
+
+                // 尝试从缓存加载
+                try {
+                    const cachedData = await ipcRenderer.invoke('check-book-cache', filePath);
+                    if (cachedData && cachedData.chapters && cachedData.chapters.length > 0) {
+                        console.log('命中缓存，使用缓存数据');
+                        chapters = cachedData.chapters;
+                        currentFileName = fileName;
+                        window.isPreviewMode = false;
+                        window.waitingForHistory = false;
+
+                        // 更新UI
+                        document.getElementById('book-title').textContent = fileName.replace('.txt', '');
+                        document.getElementById('content').style.display = 'block';
+
+                        updateChapterList();
+                        document.querySelector('.navigation-buttons').style.display = 'flex';
+                        document.querySelector('.progress-indicator').style.display = 'block';
+
+                        // 恢复进度逻辑
+                        const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                        let targetChapter = 0;
+                        let targetPage = 0;
+
+                        if (initialPosition > 0 || initialChapter > 0) {
+                            targetPage = initialPosition;
+                            targetChapter = initialChapter;
+                            // 更新进度记录
+                            allBookProgress[fileName] = {
+                                page: targetPage,
+                                chapter: targetChapter,
+                                lastRead: new Date().toISOString(),
+                                hasChapters: true
+                            };
+                            localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+                        } else if (allBookProgress[fileName]) {
+                            targetChapter = allBookProgress[fileName].chapter || 0;
+                            targetPage = allBookProgress[fileName].page || 0;
+                        }
+
+                        // 显示页面
+                        if (pageMode === 'scroll') {
+                            showAllContent();
+                        } else {
+                            showPage(targetPage, targetChapter);
+                        }
+
+                        addToHistory({
+                            fileName: fileName,
+                            date: new Date().toLocaleString(),
+                            lastPosition: targetPage,
+                            chapter: targetChapter
+                        });
+
+                        document.querySelector('.loading-message').textContent = '加载完成';
+                        document.getElementById('loading-overlay').style.display = 'none';
+                        return;
+                    }
+                } catch (cacheError) {
+                    console.error('检查缓存失败:', cacheError);
+                }
 
                 // 设置全局预览模式标志，防止在预览期间保存进度
                 window.isPreviewMode = true;

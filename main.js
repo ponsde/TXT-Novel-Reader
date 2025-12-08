@@ -2,6 +2,19 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsPromises = fs.promises;
+const crypto = require('crypto');
+
+// 缓存目录
+const CACHE_DIR = path.join(app.getPath('userData'), 'book_cache');
+
+// 确保缓存目录存在
+if (!fs.existsSync(CACHE_DIR)) {
+    try {
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
+    } catch (err) {
+        console.error('创建缓存目录失败:', err);
+    }
+}
 
 // 添加全局变量存储已随机过的书籍
 let randomizedBooks = [];
@@ -659,5 +672,50 @@ ipcMain.handle('load-history', async () => {
     } catch (error) {
         console.error('加载历史记录失败:', error);
         return [];
+    }
+});
+
+// 生成书籍缓存键
+async function getBookKey(filePath) {
+    try {
+        const stats = await fsPromises.stat(filePath);
+        const key = `${filePath}-${stats.size}-${stats.mtime.getTime()}`;
+        return crypto.createHash('md5').update(key).digest('hex');
+    } catch (error) {
+        console.error('生成缓存键失败:', error);
+        return null;
+    }
+}
+
+// 检查书籍缓存
+ipcMain.handle('check-book-cache', async (event, filePath) => {
+    try {
+        const bookKey = await getBookKey(filePath);
+        if (!bookKey) return null;
+
+        const cachePath = path.join(CACHE_DIR, `${bookKey}.json`);
+        if (fs.existsSync(cachePath)) {
+            const data = await fsPromises.readFile(cachePath, 'utf8');
+            return JSON.parse(data);
+        }
+        return null;
+    } catch (error) {
+        console.error('读取缓存失败:', error);
+        return null;
+    }
+});
+
+// 保存书籍缓存
+ipcMain.handle('save-book-cache', async (event, filePath, data) => {
+    try {
+        const bookKey = await getBookKey(filePath);
+        if (!bookKey) return false;
+
+        const cachePath = path.join(CACHE_DIR, `${bookKey}.json`);
+        await fsPromises.writeFile(cachePath, JSON.stringify(data), 'utf8');
+        return true;
+    } catch (error) {
+        console.error('保存缓存失败:', error);
+        return false;
     }
 });
