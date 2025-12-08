@@ -207,15 +207,9 @@
     </div>
 
     <div class="reader-container">
-        <!-- 移动端顶部栏 -->
+        <!-- 移动端顶部栏 (仅显示标题) -->
         <div class="mobile-top-bar controls-hidden" id="mobile-top-bar">
-            <div class="nav-btn" onclick="backToHome()">
-                <i class="icon">⌂</i>
-            </div>
             <div class="nav-title" id="mobile-book-title">优雅阅读器</div>
-            <div class="nav-btn" id="mobile-library-btn-top">
-                <i class="icon">📚</i>
-            </div>
         </div>
 
         <div class="reader-header">
@@ -231,18 +225,18 @@
             </div>
 
             <div class="reader-sidebar">
-                <div class="setting-item mobile-hidden">
+                <div class="setting-item">
                     <label for="file-input" class="setting-item">
                         <i class="icon">📂</i>
                         <span>选择</span>
                     </label>
                     <input type="file" id="file-input" accept=".txt" style="display: none;">
                 </div>
-                <div class="setting-item mobile-hidden" id="random-book-btn">
+                <div class="setting-item" id="random-book-btn">
                     <i class="icon">🎲</i>
                     <span>随机</span>
                 </div>
-                <div class="setting-item mobile-hidden" id="library-btn">
+                <div class="setting-item" id="library-btn">
                     <i class="icon">📚</i>
                     <span>书库</span>
                 </div>
@@ -270,7 +264,7 @@
                     <i class="icon">🗑️</i>
                     <span>清存</span>
                 </div>
-                <div class="setting-item mobile-hidden" onclick="backToHome()">
+                <div class="setting-item" onclick="backToHome()">
                     <i class="icon">⌂</i>
                     <span>主页</span>
                 </div>
