@@ -886,17 +886,19 @@ body.dark-mode .setting-btn:hover {
     color: #fff;
 }
 
-/* 恢复右侧功能栏样式 */
-.reader-sidebar {
-    position: fixed;
-    right: calc(50% - 500px - 70px);
-    top: 70%;
-    transform: translateY(-50%);
-    width: 60px;
-    background: #fff;
-    box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
-    z-index: 100;
+/* 恢复右侧功能栏样式 - 仅桌面端生效 */
+@media (min-width: 769px) {
+    .reader-sidebar {
+        position: fixed;
+        right: calc(50% - 500px - 70px);
+        top: 70%;
+        transform: translateY(-50%);
+        width: 60px;
+        background: #fff;
+        box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+        border-radius: 8px;
+        z-index: 100;
+    }
 }
 
 /* 语音面板位置 */
