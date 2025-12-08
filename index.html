@@ -1719,19 +1719,6 @@
             }
             return null;
         }
-        baseDir: newPath,
-            searchDirs: searchDirs
-                    });
-
-        showNotification(`已设置新路径: ${newPath}`);
-                }
-        return newPath;
-            } catch (error) {
-            console.error('选择路径失败:', error);
-            alert('选择路径失败: ' + error.message);
-            return null;
-        }
-        }
 
         // 更新进度条
         function updateProgressBar() {
