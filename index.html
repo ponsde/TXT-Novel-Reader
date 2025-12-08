@@ -55,6 +55,17 @@
                     request.onerror = () => reject(request.error);
                 });
             }
+
+            async clear() {
+                await this.open();
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction([this.storeName], 'readwrite');
+                    const store = transaction.objectStore(this.storeName);
+                    const request = store.clear();
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
         }
 
         const webBookCache = new SimpleDB('BookCacheDB', 'chapters');
@@ -241,6 +252,10 @@
                 <div class="setting-item" onclick="changeFontSize(-1)">
                     <i class="icon">A-</i>
                     <span>减小</span>
+                </div>
+                <div class="setting-item" onclick="clearBookCache()">
+                    <i class="icon">🗑️</i>
+                    <span>清存</span>
                 </div>
                 <div class="setting-item" onclick="backToHome()">
                     <i class="icon">⌂</i>
@@ -2757,6 +2772,26 @@
                 lastPosition: currentPage,
                 chapter: chapters.length > 0 ? currentChapter : 0  // 如果没有章节，章节号始终为0
             });
+        }
+
+        // 清理书籍缓存
+        async function clearBookCache() {
+            if (confirm('确定要清空所有书籍缓存吗？\n这将释放本地空间，但下次打开书籍需要重新下载。')) {
+                try {
+                    if (isWebMode) {
+                        await webBookCache.clear();
+                    } else {
+                        // Electron 模式暂未实现清理接口，或者可以手动删除文件夹
+                        // 这里简单提示
+                        alert('Electron 模式请手动清理缓存文件夹');
+                        return;
+                    }
+                    showNotification('缓存已清空');
+                } catch (error) {
+                    console.error('清理缓存失败:', error);
+                    showNotification('清理缓存失败: ' + error.message);
+                }
+            }
         }
 
         // 添加返回主页函数
