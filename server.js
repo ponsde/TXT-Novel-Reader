@@ -384,7 +384,23 @@ const apiHandlers = {
     },
 
     'get-random-file': async (args) => {
-        const baseDir = args[0];
+        let baseDir = args[0];
+
+        // 如果未提供路径或路径不存在，尝试使用配置中的默认路径
+        if (!baseDir || !fs.existsSync(baseDir)) {
+            try {
+                const config = await apiHandlers['load-config']();
+                baseDir = config.baseDir;
+            } catch (e) {
+                console.error('获取默认路径失败:', e);
+            }
+        }
+
+        // 如果仍然无效，尝试使用默认 books 目录
+        if (!baseDir || !fs.existsSync(baseDir)) {
+            baseDir = path.join(BASE_DIR, 'books');
+        }
+
         await loadRandomState(); // 确保状态是最新的
 
         const txtFiles = await getAllTxtFiles(baseDir);
