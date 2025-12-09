@@ -16,16 +16,16 @@ if (!fs.existsSync(CACHE_DIR)) {
     }
 }
 
-// 添加全局变量存储已随机过的书籍
-let randomizedBooks = [];
-let allAvailableBooks = [];
+// 使用应用根目录而不是执行文件目录，以确保开发环境和生产环境一致性
+// 在开发环境中，__dirname 指向项目根目录
+// 在打包后，通常指向 resources/app.asar 或 resources/app
+const BASE_DIR = __dirname;
 const RANDOM_STATE_FILE = 'random_state.json';
 
 // 加载随机状态
 async function loadRandomState() {
     try {
-        const exePath = app.getPath('exe');
-        const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
+        const stateFilePath = path.join(BASE_DIR, RANDOM_STATE_FILE);
 
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
@@ -45,8 +45,7 @@ async function loadRandomState() {
 // 保存随机状态
 async function saveRandomState() {
     try {
-        const exePath = app.getPath('exe');
-        const stateFilePath = path.join(path.dirname(exePath), RANDOM_STATE_FILE);
+        const stateFilePath = path.join(BASE_DIR, RANDOM_STATE_FILE);
 
         const state = {
             randomizedBooks,
@@ -620,8 +619,7 @@ async function findFileInDirectory(dir, fileName) {
 ipcMain.handle('save-history', async (event, history) => {
     try {
         // 获取配置
-        const exePath = app.getPath('exe');
-        const configPath = path.join(path.dirname(exePath), 'config.json');
+        const configPath = path.join(BASE_DIR, 'config.json');
         let libraryDir = '';
 
         if (fs.existsSync(configPath)) {
@@ -648,8 +646,7 @@ ipcMain.handle('save-history', async (event, history) => {
 ipcMain.handle('load-history', async () => {
     try {
         // 获取配置
-        const exePath = app.getPath('exe');
-        const configPath = path.join(path.dirname(exePath), 'config.json');
+        const configPath = path.join(BASE_DIR, 'config.json');
         let libraryDir = '';
 
         if (fs.existsSync(configPath)) {
@@ -673,6 +670,31 @@ ipcMain.handle('load-history', async () => {
         console.error('加载历史记录失败:', error);
         return [];
     }
+});
+const configPath = path.join(path.dirname(exePath), 'config.json');
+let libraryDir = '';
+
+if (fs.existsSync(configPath)) {
+    const configData = await fsPromises.readFile(configPath, 'utf8');
+    const config = JSON.parse(configData);
+    libraryDir = config.libraryDir || config.baseDir;
+}
+
+// 如果没有配置路径，使用文档目录
+if (!libraryDir) {
+    libraryDir = app.getPath('documents');
+}
+
+const historyPath = path.join(libraryDir, 'reading_history.json');
+if (fs.existsSync(historyPath)) {
+    const data = await fsPromises.readFile(historyPath, 'utf8');
+    return JSON.parse(data);
+}
+return [];
+    } catch (error) {
+    console.error('加载历史记录失败:', error);
+    return [];
+}
 });
 
 // 生成书籍缓存键
