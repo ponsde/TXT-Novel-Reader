@@ -2252,43 +2252,8 @@ function initApp() {
     // 绑定事件监听
     const randomButton = document.getElementById('random-book-btn');
     if (randomButton) {
-        // 使用 onclick 属性以确保覆盖旧的事件处理，避免重复绑定
-        randomButton.onclick = function (e) {
-            console.log('Random button clicked');
-            // 检查是否按住了Ctrl键
-            const useCustomPath = e.ctrlKey;
-            loadRandomBook(useCustomPath);
-        };
-
-        // 添加长按事件支持（针对移动端）
-        let pressTimer;
-        randomButton.addEventListener('touchstart', (e) => {
-            pressTimer = setTimeout(() => {
-                // 触发右键菜单逻辑
-                const event = new MouseEvent('contextmenu', {
-                    bubbles: true,
-                    cancelable: true,
-                    view: window,
-                    clientX: e.touches[0].clientX,
-                    clientY: e.touches[0].clientY,
-                    screenX: e.touches[0].screenX,
-                    screenY: e.touches[0].screenY
-                });
-                randomButton.dispatchEvent(event);
-            }, 800); // 800ms 长按
-        }, { passive: true });
-
-        randomButton.addEventListener('touchend', () => {
-            clearTimeout(pressTimer);
-        }, { passive: true });
-
-        randomButton.addEventListener('touchmove', () => {
-            clearTimeout(pressTimer);
-        }, { passive: true });
-
-        // 右键菜单
-        randomButton.oncontextmenu = function (e) {
-            e.preventDefault();
+        // 提取显示菜单的逻辑
+        const showRandomMenu = (x, y) => {
             // 移除已存在的菜单
             const existingMenu = document.getElementById('random-context-menu');
             if (existingMenu) existingMenu.remove();
@@ -2298,21 +2263,16 @@ function initApp() {
             menu.className = 'context-menu';
             menu.id = 'random-context-menu';
             menu.innerHTML = `
-                        <div class="context-menu-item" onclick="resetRandomState()">
-                            重置随机状态
-                        </div>
-                        <div class="context-menu-item" onclick="selectCustomPath()">
-                            选择随机目录
-                        </div>
-                    `;
+                <div class="context-menu-item" onclick="resetRandomState()">
+                    重置随机状态
+                </div>
+                <div class="context-menu-item" onclick="selectCustomPath()">
+                    选择随机目录
+                </div>
+            `;
 
-            // 设置菜单位置
-            // 兼容触摸事件和鼠标事件
-            const pageX = e.pageX || (e.touches && e.touches[0] ? e.touches[0].pageX : 0) || (e.clientX ? e.clientX + window.scrollX : 0);
-            const pageY = e.pageY || (e.touches && e.touches[0] ? e.touches[0].pageY : 0) || (e.clientY ? e.clientY + window.scrollY : 0);
-
-            menu.style.left = pageX + 'px';
-            menu.style.top = pageY + 'px';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
 
             // 添加到页面
             document.body.appendChild(menu);
@@ -2326,6 +2286,60 @@ function initApp() {
             }
             // 延迟绑定关闭事件，防止立即触发
             setTimeout(() => document.addEventListener('click', closeMenu), 0);
+        };
+
+        // 使用 onclick 属性以确保覆盖旧的事件处理，避免重复绑定
+        randomButton.onclick = function (e) {
+            console.log('Random button clicked');
+            // 检查是否按住了Ctrl键
+            const useCustomPath = e.ctrlKey;
+            loadRandomBook(useCustomPath);
+        };
+
+        // 添加长按事件支持（针对移动端）
+        let pressTimer;
+        let isLongPress = false;
+
+        randomButton.addEventListener('touchstart', (e) => {
+            isLongPress = false;
+            pressTimer = setTimeout(() => {
+                isLongPress = true;
+                // 触发菜单逻辑
+                const touch = e.touches[0];
+                showRandomMenu(touch.pageX, touch.pageY);
+            }, 800); // 800ms 长按
+        }, { passive: true });
+
+        randomButton.addEventListener('touchend', (e) => {
+            clearTimeout(pressTimer);
+            if (isLongPress) {
+                // 如果是长按，阻止默认点击行为（虽然 passive 不能阻止，但我们可以通过标志位控制）
+                // 注意：touchend 无法阻止 click 事件，因为 touchstart 是 passive 的
+                // 我们需要在 click 事件中检查 isLongPress
+                e.preventDefault(); // 尝试阻止（如果不是 passive）
+            }
+        }, { passive: false }); // 改为 false 以便调用 preventDefault
+
+        randomButton.addEventListener('touchmove', () => {
+            clearTimeout(pressTimer);
+        }, { passive: true });
+
+        // 拦截点击事件，如果是长按触发的，则不执行点击逻辑
+        const originalClick = randomButton.onclick;
+        randomButton.onclick = function (e) {
+            if (isLongPress) {
+                isLongPress = false;
+                return;
+            }
+            if (originalClick) originalClick.call(this, e);
+        };
+
+        // 右键菜单 (PC端)
+        randomButton.oncontextmenu = function (e) {
+            e.preventDefault();
+            const pageX = e.pageX || (e.clientX ? e.clientX + window.scrollX : 0);
+            const pageY = e.pageY || (e.clientY ? e.clientY + window.scrollY : 0);
+            showRandomMenu(pageX, pageY);
         };
     } else {
         console.error('Random button not found');
