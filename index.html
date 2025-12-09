@@ -2335,6 +2335,20 @@
 
                 // 点击判定 (滑动距离很小)
                 if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
+                    // 只有在打开书籍时才启用沉浸式切换
+                    if (!currentFileName) return;
+
+                    // 检查点击目标是否是交互元素
+                    const target = e.target;
+                    if (target.closest('button') ||
+                        target.closest('.history-item') ||
+                        target.closest('.setting-item') ||
+                        target.closest('.nav-btn') ||
+                        target.closest('.modal') ||
+                        target.closest('.context-menu')) {
+                        return;
+                    }
+
                     // 获取点击位置相对于视口的坐标
                     const clientX = e.changedTouches[0].clientX;
                     const clientY = e.changedTouches[0].clientY;
