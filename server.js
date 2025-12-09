@@ -127,6 +127,32 @@ async function getAllTxtFiles(dir) {
 
 // API 处理函数
 const apiHandlers = {
+    'save-history': async (args) => {
+        const history = args[0];
+        try {
+            const historyPath = path.join(BASE_DIR, 'reading_history.json');
+            await fsPromises.writeFile(historyPath, JSON.stringify(history, null, 4));
+            return true;
+        } catch (error) {
+            console.error('保存历史记录失败:', error);
+            return false;
+        }
+    },
+
+    'load-history': async () => {
+        try {
+            const historyPath = path.join(BASE_DIR, 'reading_history.json');
+            if (fs.existsSync(historyPath)) {
+                const data = await fsPromises.readFile(historyPath, 'utf8');
+                return JSON.parse(data);
+            }
+            return [];
+        } catch (error) {
+            console.error('加载历史记录失败:', error);
+            return [];
+        }
+    },
+
     'load-config': async () => {
         const configPath = path.join(BASE_DIR, CONFIG_FILE);
         // 优先使用环境变量中的 BOOKS_DIR

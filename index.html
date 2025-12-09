@@ -1414,6 +1414,15 @@
 
         // 修改 loadHistoryRecord 和 searchFile 函数，支持多本书的阅读进度
         function loadHistoryRecord(fileName, lastPosition, lastChapter) {
+            // 如果侧边栏是打开的，关闭它
+            const sidebar = document.querySelector('.reader-sidebar');
+            if (sidebar && sidebar.classList.contains('active')) {
+                sidebar.classList.remove('active');
+                // 同时隐藏子面板
+                document.getElementById('chapter-list').classList.add('hidden');
+                document.getElementById('font-settings-panel').classList.add('hidden');
+            }
+
             const pendingRestore = {
                 fileName: fileName,
                 position: lastPosition,
