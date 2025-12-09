@@ -22,6 +22,10 @@ if (!fs.existsSync(CACHE_DIR)) {
 const BASE_DIR = __dirname;
 const RANDOM_STATE_FILE = 'random_state.json';
 
+// 全局变量存储随机状态
+let randomizedBooks = [];
+let allAvailableBooks = [];
+
 // 加载随机状态
 async function loadRandomState() {
     try {
@@ -670,31 +674,6 @@ ipcMain.handle('load-history', async () => {
         console.error('加载历史记录失败:', error);
         return [];
     }
-});
-const configPath = path.join(path.dirname(exePath), 'config.json');
-let libraryDir = '';
-
-if (fs.existsSync(configPath)) {
-    const configData = await fsPromises.readFile(configPath, 'utf8');
-    const config = JSON.parse(configData);
-    libraryDir = config.libraryDir || config.baseDir;
-}
-
-// 如果没有配置路径，使用文档目录
-if (!libraryDir) {
-    libraryDir = app.getPath('documents');
-}
-
-const historyPath = path.join(libraryDir, 'reading_history.json');
-if (fs.existsSync(historyPath)) {
-    const data = await fsPromises.readFile(historyPath, 'utf8');
-    return JSON.parse(data);
-}
-return [];
-    } catch (error) {
-    console.error('加载历史记录失败:', error);
-    return [];
-}
 });
 
 // 生成书籍缓存键

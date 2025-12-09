@@ -58,3 +58,11 @@ jspm_packages/
 # dotenv environment variables file
 .env 
 books/
+
+# User Data
+reading_history.json
+config.json
+random_state.json
+book_cache/
+books/*.txt
+!books/.gitkeep
