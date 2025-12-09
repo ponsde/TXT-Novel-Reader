@@ -2335,23 +2335,35 @@
 
                 // 点击判定 (滑动距离很小)
                 if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
-                    // 只有在打开书籍时才启用沉浸式切换
-                    if (currentFileName) {
+                    // 获取点击位置相对于视口的坐标
+                    const clientX = e.changedTouches[0].clientX;
+                    const clientY = e.changedTouches[0].clientY;
+                    const screenWidth = window.innerWidth;
+                    const screenHeight = window.innerHeight;
+
+                    // 定义中间区域 (例如：宽度 30%-70%，高度 20%-80%)
+                    const isCenter = clientX > screenWidth * 0.3 && clientX < screenWidth * 0.7 &&
+                        clientY > screenHeight * 0.2 && clientY < screenHeight * 0.8;
+
+                    if (isCenter) {
                         const sidebar = document.querySelector('.reader-sidebar');
                         const topBar = document.getElementById('mobile-top-bar');
 
-                        // 切换侧边栏显示状态
-                        sidebar.classList.toggle('active');
+                        // 检查当前状态 (以侧边栏为准)
+                        const isSidebarActive = sidebar.classList.contains('active');
 
-                        // 切换顶部栏显示状态
-                        if (topBar) {
-                            topBar.classList.toggle('controls-hidden');
-                        }
+                        if (isSidebarActive) {
+                            // 隐藏所有
+                            sidebar.classList.remove('active');
+                            if (topBar) topBar.classList.add('controls-hidden');
 
-                        // 如果侧边栏隐藏了，也隐藏目录和设置
-                        if (!sidebar.classList.contains('active')) {
+                            // 隐藏子面板
                             document.getElementById('chapter-list').classList.add('hidden');
                             document.getElementById('font-settings-panel').classList.add('hidden');
+                        } else {
+                            // 显示所有
+                            sidebar.classList.add('active');
+                            if (topBar) topBar.classList.remove('controls-hidden');
                         }
                     }
                     return;
