@@ -1413,7 +1413,7 @@
         }
 
         // 修改 loadHistoryRecord 和 searchFile 函数，支持多本书的阅读进度
-        function loadHistoryRecord(fileName, lastPosition, lastChapter) {
+        function loadHistoryRecord(fileName, lastPosition, lastChapter, filePath = null) {
             // 如果侧边栏是打开的，关闭它
             const sidebar = document.querySelector('.reader-sidebar');
             if (sidebar && sidebar.classList.contains('active')) {
@@ -1434,6 +1434,21 @@
             window.pendingPosition = lastPosition;
             window.pendingChapter = lastChapter;
 
+            // 如果有完整路径，直接尝试加载，不再搜索
+            if (filePath) {
+                console.log('使用保存的路径直接加载:', filePath);
+                loadAndRenderBook(filePath, fileName, lastPosition, lastChapter).catch(err => {
+                    console.warn('直接加载失败，尝试搜索:', err);
+                    // 如果直接加载失败（可能文件移动了），回退到搜索逻辑
+                    startSearch(fileName);
+                });
+                return;
+            }
+
+            startSearch(fileName);
+        }
+
+        function startSearch(fileName) {
             // 显示加载中
             document.getElementById('loading-overlay').style.display = 'flex';
             document.querySelector('.loading-message').textContent = `正在查找文件: ${fileName}...`;
@@ -1642,10 +1657,13 @@
                             }
                         }
 
+                        // 确保 filePath 被正确转义和传递
+                        const filePathArg = record.filePath ? `'${record.filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'` : 'null';
+
                         historyHtml += `
                             <div class="history-item" 
                                 data-filename="${record.fileName}"
-                                onclick="loadHistoryRecord('${record.fileName}', ${record.lastPosition}, ${record.chapter || 0})"
+                                onclick="loadHistoryRecord('${record.fileName}', ${record.lastPosition}, ${record.chapter || 0}, ${filePathArg})"
                                 oncontextmenu="showHistoryContextMenu(event, '${record.fileName}'); return false;">
                                 <div class="history-info">
                                     <div class="history-title">${record.fileName}</div>
@@ -2903,6 +2921,7 @@
             // 更新历史记录
             addToHistory({
                 fileName: currentFileName,
+                filePath: window.currentFilePath, // 保存完整路径
                 date: new Date().toLocaleString(),
                 lastPosition: currentPage,
                 chapter: chapters.length > 0 ? currentChapter : 0  // 如果没有章节，章节号始终为0
