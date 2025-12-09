@@ -2335,9 +2335,6 @@
 
                 // 点击判定 (滑动距离很小)
                 if (Math.abs(diffX) < 10 && Math.abs(diffY) < 10) {
-                    // 只有在打开书籍时才启用沉浸式切换
-                    if (!currentFileName) return;
-
                     // 检查点击目标是否是交互元素
                     const target = e.target;
                     if (target.closest('button') ||
@@ -2361,23 +2358,20 @@
 
                     if (isCenter) {
                         const sidebar = document.querySelector('.reader-sidebar');
-                        const topBar = document.getElementById('mobile-top-bar');
 
                         // 检查当前状态 (以侧边栏为准)
                         const isSidebarActive = sidebar.classList.contains('active');
 
                         if (isSidebarActive) {
-                            // 隐藏所有
+                            // 隐藏侧边栏
                             sidebar.classList.remove('active');
-                            if (topBar) topBar.classList.add('controls-hidden');
 
                             // 隐藏子面板
                             document.getElementById('chapter-list').classList.add('hidden');
                             document.getElementById('font-settings-panel').classList.add('hidden');
                         } else {
-                            // 显示所有
+                            // 显示侧边栏
                             sidebar.classList.add('active');
-                            if (topBar) topBar.classList.remove('controls-hidden');
                         }
                     }
                     return;
