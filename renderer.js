@@ -3262,19 +3262,76 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
         // 强制UI渲染
         await new Promise(resolve => requestAnimationFrame(resolve));
 
-        // 直接加载完整文件
-        const data = await ipcRenderer.invoke('read-file', filePath);
-
-        let arrayBuffer;
-        if (data.buffer) {
-            arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-        } else {
-            arrayBuffer = new Uint8Array(data).buffer;
+        // 尝试获取文件大小，判断是否需要分片加载
+        let fileSize = 0;
+        try {
+            fileSize = await ipcRenderer.invoke('get-file-size', filePath);
+        } catch (e) {
+            console.warn('获取文件大小失败:', e);
         }
 
-        // 普通加载不是预览模式
-        window.isPreviewMode = false;
-        await processFileContent(arrayBuffer, fileName);
+        const LARGE_FILE_THRESHOLD = 512 * 1024; // 512KB 以上视为大文件
+
+        if (fileSize > LARGE_FILE_THRESHOLD) {
+            console.log(`大文件 (${(fileSize / 1024 / 1024).toFixed(2)}MB)，启用分片加载预览`);
+
+            // 1. 加载预览分片 (前 100KB)
+            // 足够显示前几页，让用户感觉是秒开
+            const PREVIEW_SIZE = 100 * 1024;
+            try {
+                const chunkData = await ipcRenderer.invoke('read-file-chunk', filePath, 0, PREVIEW_SIZE);
+
+                if (chunkData) {
+                    let chunkBuffer;
+                    if (chunkData.buffer) {
+                        chunkBuffer = chunkData.buffer.slice(chunkData.byteOffset, chunkData.byteOffset + chunkData.byteLength);
+                    } else {
+                        chunkBuffer = new Uint8Array(chunkData).buffer;
+                    }
+
+                    // 渲染预览
+                    window.isPreviewMode = true;
+                    // 标记正在等待完整内容
+                    window.waitingForHistory = true;
+
+                    await processFileContent(chunkBuffer, fileName, { isPreview: true });
+                }
+            } catch (e) {
+                console.error('预览加载失败，回退到全量加载', e);
+            }
+
+            // 2. 后台加载完整文件
+            // 此时用户已经可以看到第一页内容了
+            console.log('开始后台加载完整文件...');
+            const fullData = await ipcRenderer.invoke('read-file', filePath);
+
+            let fullBuffer;
+            if (fullData.buffer) {
+                fullBuffer = fullData.buffer.slice(fullData.byteOffset, fullData.byteOffset + fullData.byteLength);
+            } else {
+                fullBuffer = new Uint8Array(fullData).buffer;
+            }
+
+            console.log('完整文件加载完成，更新内容');
+            window.isPreviewMode = false;
+            // 传递 isBackground: true，这样 processFileContent 会尝试保持当前阅读位置
+            await processFileContent(fullBuffer, fileName, { isBackground: true });
+
+        } else {
+            // 小文件直接加载完整文件
+            const data = await ipcRenderer.invoke('read-file', filePath);
+
+            let arrayBuffer;
+            if (data.buffer) {
+                arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            } else {
+                arrayBuffer = new Uint8Array(data).buffer;
+            }
+
+            // 普通加载不是预览模式
+            window.isPreviewMode = false;
+            await processFileContent(arrayBuffer, fileName);
+        }
 
     } catch (error) {
         console.error('加载书籍失败:', error);
