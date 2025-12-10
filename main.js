@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const fsPromises = fs.promises;
 const crypto = require('crypto');
-const { spawn } = require('child_process');
 
 // 缓存目录
 const CACHE_DIR = path.join(app.getPath('userData'), 'book_cache');
@@ -88,56 +87,6 @@ function createWindow() {
     // 注释掉开发者工具，以避免生产环境中显示
     // win.webContents.openDevTools();
 }
-
-// 处理 Python 爬虫请求
-ipcMain.handle('run-python-crawler', async (event, url) => {
-    return new Promise((resolve, reject) => {
-        const pythonScript = path.join(__dirname, 'crawler.py');
-        // 尝试使用系统中的 python 命令，可能是 python 或 python3
-        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
-
-        console.log(`正在启动 Python 爬虫: ${pythonCommand} ${pythonScript} ${url}`);
-
-        const pythonProcess = spawn(pythonCommand, [pythonScript, url]);
-
-        let resultData = '';
-        let errorData = '';
-
-        pythonProcess.stdout.on('data', (data) => {
-            resultData += data.toString();
-        });
-
-        pythonProcess.stderr.on('data', (data) => {
-            errorData += data.toString();
-            console.error(`Python Error: ${data}`);
-        });
-
-        pythonProcess.on('close', (code) => {
-            if (code !== 0) {
-                console.error(`Python process exited with code ${code}`);
-                reject(new Error(`Python 爬虫执行失败 (退出码 ${code}): ${errorData}`));
-            } else {
-                try {
-                    // 尝试解析 JSON
-                    const chapters = JSON.parse(resultData);
-                    if (chapters.error) {
-                        reject(new Error(chapters.error));
-                    } else {
-                        resolve(chapters);
-                    }
-                } catch (e) {
-                    console.error('解析 Python 输出失败:', e);
-                    console.log('原始输出:', resultData);
-                    reject(new Error('解析爬虫结果失败，请检查 Python 环境和依赖'));
-                }
-            }
-        });
-
-        pythonProcess.on('error', (err) => {
-            reject(new Error(`无法启动 Python 进程: ${err.message}. 请确保已安装 Python 并添加到环境变量。`));
-        });
-    });
-});
 
 app.whenReady().then(async () => {
     // 加载随机状态
@@ -857,54 +806,5 @@ ipcMain.handle('save-book-cache', async (event, filePath, data) => {
     } catch (error) {
         console.error('保存缓存失败:', error);
         return false;
-    }
-});
-
-// 网络请求处理 - 用于爬虫功能
-ipcMain.handle('fetch-url', async (event, url) => {
-    try {
-        console.log('正在获取URL:', url);
-        // Electron 28+ (Node 18+) 原生支持 fetch
-        const response = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const arrayBuffer = await response.arrayBuffer();
-        // 返回 Buffer 对象，以便在渲染进程中处理编码
-        return Buffer.from(arrayBuffer);
-    } catch (error) {
-        console.error('Fetch error:', error);
-        return { error: error.message };
-    }
-});
-
-// 保存文本文件 - 用于爬虫保存
-ipcMain.handle('save-text-file', async (event, { content, defaultName }) => {
-    try {
-        const { filePath } = await dialog.showSaveDialog({
-            title: '保存小说',
-            defaultPath: defaultName || 'novel.txt',
-            filters: [
-                { name: 'Text Files', extensions: ['txt'] },
-                { name: 'All Files', extensions: ['*'] }
-            ]
-        });
-
-        if (filePath) {
-            await fsPromises.writeFile(filePath, content, 'utf8');
-            return { success: true, filePath };
-        }
-        return { canceled: true };
-    } catch (error) {
-        console.error('Save file error:', error);
-        return { error: error.message };
     }
 });

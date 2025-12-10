@@ -89,10 +89,6 @@
                     <i class="icon">🗑️</i>
                     <span>清存</span>
                 </div>
-                <div class="setting-item" onclick="toggleCrawler()">
-                    <i class="icon">🕷️</i>
-                    <span>爬虫</span>
-                </div>
                 <div class="setting-item mobile-profile-toggle" onclick="toggleProfile()">
                     <i class="icon">👁️</i>
                     <span>模式</span>
@@ -174,52 +170,6 @@
                 <input type="range" id="paragraph-spacing-slider" min="0.6" max="2" step="0.1" value="0.8"
                     onchange="changeParagraphSpacing()">
                 <span id="paragraph-spacing-value">0.8em</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- 爬虫面板 -->
-    <div id="crawler-panel" class="settings-panel hidden" style="width: 500px;">
-        <div class="settings-panel-header">
-            <h3>网络爬虫</h3>
-            <button class="close-btn" onclick="toggleCrawler()">×</button>
-        </div>
-        <div class="settings-panel-content">
-            <div class="setting-group">
-                <label>目录页链接：</label>
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" id="crawler-url" placeholder="输入小说目录页网址 (如: https://...)"
-                        style="flex: 1; padding: 8px;">
-                    <button onclick="analyzeUrl()"
-                        style="padding: 8px 15px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer;">分析</button>
-                </div>
-            </div>
-
-            <div id="crawler-status" style="margin-bottom: 15px; font-size: 14px; color: #666;"></div>
-
-            <div id="crawler-preview"
-                style="max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 15px; display: none;">
-                <!-- 章节预览列表 -->
-            </div>
-
-            <div class="setting-group" id="crawler-actions" style="display: none;">
-                <button onclick="startCrawling()"
-                    style="width: 100%; background-color: #2ecc71; color: white; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px;">开始爬取并保存</button>
-            </div>
-
-            <div id="crawler-progress-container" style="display: none;">
-                <div class="progress-bar"
-                    style="margin: 10px 0; background-color: #eee; height: 10px; border-radius: 5px;">
-                    <div id="crawler-progress-bar" class="progress-inner"
-                        style="width: 0%; height: 100%; background-color: #3498db; border-radius: 5px; transition: width 0.3s;">
-                    </div>
-                </div>
-                <div style="text-align: center; font-size: 12px;">
-                    <span id="crawler-progress-text">0/0</span>
-                </div>
-                <div id="crawler-log"
-                    style="font-size: 12px; color: #999; margin-top: 5px; height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                </div>
             </div>
         </div>
     </div>
