@@ -949,6 +949,12 @@ function showTextPage(pageNum, totalPages, options = {}) {
         // 确保翻页按钮可见
         document.querySelector('.navigation-buttons').style.display = 'flex';
 
+        // 确保整个控制栏可见
+        const controls = document.querySelector('.reader-controls');
+        if (controls) {
+            controls.style.display = 'block';
+        }
+
         // 更新进度条
         updateProgressBar();
     } else {
@@ -995,6 +1001,17 @@ function showPage(pageNum, chapterNum = currentChapter, options = {}) {
         }
 
         content.innerHTML = newHTML;
+
+        // 确保翻页按钮可见
+        if (pageMode === 'page') {
+            document.querySelector('.navigation-buttons').style.display = 'flex';
+        }
+
+        // 确保整个控制栏可见
+        const controls = document.querySelector('.reader-controls');
+        if (controls) {
+            controls.style.display = 'block';
+        }
 
         // 应用段落间距设置
         const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
@@ -2029,6 +2046,9 @@ document.getElementById('page-turn-mode').addEventListener('change', function (e
         content.style.maxHeight = '800px';
         content.classList.add('scroll-mode');
 
+        // 隐藏翻页按钮
+        document.querySelector('.navigation-buttons').style.display = 'none';
+
         // 显示所有内容
         showAllContent();
     } else {
@@ -2036,6 +2056,9 @@ document.getElementById('page-turn-mode').addEventListener('change', function (e
         content.style.overflowY = 'hidden';
         content.style.maxHeight = 'none';
         content.classList.remove('scroll-mode');
+
+        // 显示翻页按钮
+        document.querySelector('.navigation-buttons').style.display = 'flex';
 
         if (chapters.length > 0) {
             // 有章节时，显示当前章节
@@ -3459,6 +3482,12 @@ function processFileContent(buffer, fileName, options = {}) {
             // 显示阅读控制栏
             const controls = document.querySelector('.reader-controls');
             if (controls) controls.style.display = 'block';
+
+            // 确保翻页按钮在分页模式下可见
+            if (pageMode === 'page') {
+                const navButtons = document.querySelector('.navigation-buttons');
+                if (navButtons) navButtons.style.display = 'flex';
+            }
 
             detectChapters(text, options);
 
