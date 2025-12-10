@@ -622,7 +622,7 @@ async function findFileInDirectory(dir, fileName) {
 }
 
 // 保存历史记录到文件
-ipcMain.handle('save-history', async (event, history) => {
+ipcMain.handle('save-history', async (event, history, profile = 'default') => {
     try {
         // 获取配置
         const configPath = path.join(BASE_DIR, 'config.json');
@@ -639,7 +639,8 @@ ipcMain.handle('save-history', async (event, history) => {
             libraryDir = app.getPath('documents');
         }
 
-        const historyPath = path.join(libraryDir, 'reading_history.json');
+        const filename = profile === 'hidden' ? 'reading_history_hidden.json' : 'reading_history.json';
+        const historyPath = path.join(libraryDir, filename);
         await fsPromises.writeFile(historyPath, JSON.stringify(history, null, 4));
         return true;
     } catch (error) {
@@ -649,7 +650,7 @@ ipcMain.handle('save-history', async (event, history) => {
 });
 
 // 从文件加载历史记录
-ipcMain.handle('load-history', async () => {
+ipcMain.handle('load-history', async (event, profile = 'default') => {
     try {
         // 获取配置
         const configPath = path.join(BASE_DIR, 'config.json');
@@ -666,14 +667,99 @@ ipcMain.handle('load-history', async () => {
             libraryDir = app.getPath('documents');
         }
 
-        const historyPath = path.join(libraryDir, 'reading_history.json');
+        const filename = profile === 'hidden' ? 'reading_history_hidden.json' : 'reading_history.json';
+        const historyPath = path.join(libraryDir, filename);
         if (fs.existsSync(historyPath)) {
             const data = await fsPromises.readFile(historyPath, 'utf8');
-            return JSON.parse(data);
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
         }
         return [];
     } catch (error) {
         console.error('加载历史记录失败:', error);
+        return [];
+    }
+});
+
+// 保存已删除的历史记录
+ipcMain.handle('save-deleted-history', async (event, deletedHistory, profile = 'default') => {
+    try {
+        // 获取配置
+        const configPath = path.join(BASE_DIR, 'config.json');
+        let libraryDir = '';
+
+        if (fs.existsSync(configPath)) {
+            const configData = await fsPromises.readFile(configPath, 'utf8');
+            const config = JSON.parse(configData);
+            libraryDir = config.libraryDir || config.baseDir;
+        }
+
+        // 如果没有配置路径，使用文档目录
+        if (!libraryDir) {
+            libraryDir = app.getPath('documents');
+        }
+
+        const filename = profile === 'hidden' ? 'deleted_history_hidden.json' : 'deleted_history.json';
+        const deletedHistoryPath = path.join(libraryDir, filename);
+
+        let currentDeleted = [];
+        if (fs.existsSync(deletedHistoryPath)) {
+            const data = await fsPromises.readFile(deletedHistoryPath, 'utf8');
+            try {
+                currentDeleted = JSON.parse(data);
+                if (!Array.isArray(currentDeleted)) currentDeleted = [];
+            } catch (e) {
+                currentDeleted = [];
+            }
+        }
+
+        // 合并并去重
+        const newSet = new Set([...currentDeleted, ...deletedHistory]);
+
+        await fsPromises.writeFile(deletedHistoryPath, JSON.stringify([...newSet], null, 4));
+        return true;
+    } catch (error) {
+        console.error('保存已删除历史记录失败:', error);
+        return false;
+    }
+});
+
+// 加载已删除的历史记录
+ipcMain.handle('load-deleted-history', async (event, profile = 'default') => {
+    try {
+        // 获取配置
+        const configPath = path.join(BASE_DIR, 'config.json');
+        let libraryDir = '';
+
+        if (fs.existsSync(configPath)) {
+            const configData = await fsPromises.readFile(configPath, 'utf8');
+            const config = JSON.parse(configData);
+            libraryDir = config.libraryDir || config.baseDir;
+        }
+
+        // 如果没有配置路径，使用文档目录
+        if (!libraryDir) {
+            libraryDir = app.getPath('documents');
+        }
+
+        const filename = profile === 'hidden' ? 'deleted_history_hidden.json' : 'deleted_history.json';
+        const deletedHistoryPath = path.join(libraryDir, filename);
+        if (fs.existsSync(deletedHistoryPath)) {
+            const data = await fsPromises.readFile(deletedHistoryPath, 'utf8');
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (e) {
+                return [];
+            }
+        }
+        return [];
+    } catch (error) {
+        console.error('加载已删除历史记录失败:', error);
         return [];
     }
 });

@@ -232,6 +232,109 @@ let wordsPerPage = 4000;
 // 全局预览模式标志
 window.isPreviewMode = false;
 
+// 多配置文件支持
+// 强制默认启动为普通模式
+let currentProfile = 'default';
+localStorage.setItem('currentProfile', 'default');
+
+function getStorageKey(key) {
+    if (currentProfile === 'default') return key;
+    return `${key}_${currentProfile}`;
+}
+
+function toggleProfile() {
+    const newProfile = currentProfile === 'default' ? 'hidden' : 'default';
+    currentProfile = newProfile;
+    localStorage.setItem('currentProfile', currentProfile);
+
+    showNotification(currentProfile === 'hidden' ? '已切换到隐私模式' : '已切换到普通模式');
+
+    // 重新加载应用状态
+    // 1. 清空当前显示
+    document.getElementById('content').style.display = 'none';
+    document.getElementById('book-title').textContent = '优雅阅读器';
+    const mobileTitle = document.getElementById('mobile-book-title');
+    if (mobileTitle) mobileTitle.textContent = '优雅阅读器';
+    currentFileName = '';
+    chapters = [];
+    currentContent = [];
+
+    // 2. 重新加载历史记录
+    updateHistoryDisplay();
+
+    // 3. 尝试加载上次阅读的书籍
+    loadLastRead();
+
+    // 4. 重新同步云端历史
+    syncCloudHistory();
+}
+
+function loadLastRead() {
+    const historyKey = getStorageKey('readingHistory');
+    const history = JSON.parse(localStorage.getItem(historyKey)) || [];
+
+    // 无论是否有历史记录，都更新显示
+    updateHistoryDisplay();
+
+    if (history.length > 0) {
+        const lastBook = history[0];
+        if (lastBook.filePath) {
+            // 询问用户是否继续阅读？或者直接加载？
+            // 为了体验流畅，直接加载，但如果是大文件可能会慢
+            // 这里我们只显示在列表中，不自动打开，以免用户想看别的
+            // 但用户要求"切换界面"，通常期望看到上次的内容
+            // 让我们尝试加载
+            // loadAndRenderBook(lastBook.filePath, lastBook.fileName);
+            // 考虑到性能，还是只停留在主页比较好，用户可以点击历史记录
+        }
+    }
+}
+
+// 同步云端历史记录
+function syncCloudHistory() {
+    ipcRenderer.invoke('load-history', currentProfile).then(cloudHistory => {
+        if (cloudHistory && Array.isArray(cloudHistory)) {
+            const localKey = getStorageKey('readingHistory');
+            let localHistory = JSON.parse(localStorage.getItem(localKey)) || [];
+
+            // 加载已删除记录
+            ipcRenderer.invoke('load-deleted-history', currentProfile).then(deletedHistory => {
+                const deletedSet = new Set(deletedHistory || []);
+
+                // 合并策略：
+                // 1. 过滤掉已删除的
+                // 2. 以时间戳为准合并
+
+                const historyMap = new Map();
+
+                // 处理本地记录
+                localHistory.forEach(item => {
+                    if (!deletedSet.has(item.fileName)) {
+                        historyMap.set(item.fileName, item);
+                    }
+                });
+
+                // 处理云端记录
+                cloudHistory.forEach(item => {
+                    if (!deletedSet.has(item.fileName)) {
+                        const existing = historyMap.get(item.fileName);
+                        if (!existing || (item.timestamp > existing.timestamp)) {
+                            historyMap.set(item.fileName, item);
+                        }
+                    }
+                });
+
+                // 转回数组并按时间排序
+                const mergedHistory = Array.from(historyMap.values())
+                    .sort((a, b) => b.timestamp - a.timestamp);
+
+                localStorage.setItem(localKey, JSON.stringify(mergedHistory));
+                updateHistoryDisplay();
+            });
+        }
+    }).catch(err => console.error('加载云端历史记录失败:', err));
+}
+
 document.getElementById('file-input').addEventListener('change', async function (e) {
     // 立即显示加载遮罩
     document.getElementById('loading-overlay').style.display = 'flex';
@@ -342,7 +445,8 @@ function detectChapters(text, options = {}) {
             const effectiveIsBackground = options.isBackground && !isOverlayVisible;
 
             // 检查是否有保存的进度，从多书籍进度存储中获取
-            const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+            const progressKey = getStorageKey('allBookProgress');
+            const allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
             if (allBookProgress[currentFileName]) {
                 let targetChapter = allBookProgress[currentFileName].chapter || 0;
                 let targetPage = allBookProgress[currentFileName].page || 0;
@@ -1370,7 +1474,8 @@ function addToHistory(record) {
         return;
     }
 
-    let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+    const historyKey = getStorageKey('readingHistory');
+    let history = JSON.parse(localStorage.getItem(historyKey)) || [];
 
     // 添加时间戳
     record.timestamp = new Date().getTime();
@@ -1400,10 +1505,10 @@ function addToHistory(record) {
     //     history.pop();
     // }
 
-    localStorage.setItem('readingHistory', JSON.stringify(history));
+    localStorage.setItem(historyKey, JSON.stringify(history));
 
     // 同步到云端/本地库目录
-    ipcRenderer.invoke('save-history', history).catch(err => console.error('同步历史记录失败:', err));
+    ipcRenderer.invoke('save-history', history, currentProfile).catch(err => console.error('同步历史记录失败:', err));
 
     // 如果当前在主页，则更新历史记录显示
     if (!currentFileName) {
@@ -1411,7 +1516,8 @@ function addToHistory(record) {
     }
 
     // 也更新阅读进度存储
-    let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+    const progressKey = getStorageKey('allBookProgress');
+    let allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
     allBookProgress[record.fileName] = {
         page: record.lastPosition,
         chapter: record.chapter || 0,
@@ -1420,12 +1526,15 @@ function addToHistory(record) {
         totalChapters: chapters.length > 0 ? chapters.length : 0,
         totalPages: chapters.length === 0 && currentContent ? Math.ceil(currentContent.length / wordsPerPage) : 0
     };
-    localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+    localStorage.setItem(progressKey, JSON.stringify(allBookProgress));
 }
 
 // 修改历史记录显示
 function updateHistoryDisplay() {
-    let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+    const historyKey = getStorageKey('readingHistory');
+    const progressKey = getStorageKey('allBookProgress');
+
+    let history = JSON.parse(localStorage.getItem(historyKey)) || [];
 
     // 过滤掉无效的历史记录（没有文件名的记录）
     const validHistory = history.filter(record => record && record.fileName && record.fileName.trim() !== '');
@@ -1433,7 +1542,7 @@ function updateHistoryDisplay() {
     // 如果发现无效记录，更新 localStorage
     if (validHistory.length !== history.length) {
         history = validHistory;
-        localStorage.setItem('readingHistory', JSON.stringify(history));
+        localStorage.setItem(historyKey, JSON.stringify(history));
     }
 
     const content = document.getElementById('content');
@@ -1442,7 +1551,7 @@ function updateHistoryDisplay() {
     if (!currentFileName) {
         let historyHtml = '<div class="history-list">';
         historyHtml += '<div class="history-header">';
-        historyHtml += '<h2>最近阅读</h2>';
+        historyHtml += `<h2>${currentProfile === 'hidden' ? '隐私阅读' : '最近阅读'}</h2>`;
         if (history.length > 0) {
             historyHtml += '<button onclick="clearHistory()" class="clear-history-btn">清空历史</button>';
         }
@@ -1457,7 +1566,7 @@ function updateHistoryDisplay() {
                 if (!record.fileName) return;
 
                 // 获取该书籍的最新进度信息
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                const allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
                 const bookProgress = allBookProgress[record.fileName] || {};
                 const lastReadDate = bookProgress.lastRead ? new Date(bookProgress.lastRead).toLocaleString() : record.date;
 
@@ -1507,6 +1616,11 @@ function updateHistoryDisplay() {
 
         historyHtml += '</div>';
         content.innerHTML = historyHtml;
+        content.style.display = 'block';
+
+        // 隐藏阅读控制栏
+        const controls = document.querySelector('.reader-controls');
+        if (controls) controls.style.display = 'none';
 
         // 应用主页字体大小
         applyHomePageFontSize();
@@ -1515,18 +1629,24 @@ function updateHistoryDisplay() {
 
 // 添加删除单个历史记录的函数
 function deleteHistoryRecord(fileName) {
-    let history = JSON.parse(localStorage.getItem('readingHistory')) || [];
+    const historyKey = getStorageKey('readingHistory');
+    const progressKey = getStorageKey('allBookProgress');
+
+    let history = JSON.parse(localStorage.getItem(historyKey)) || [];
     history = history.filter(record => record.fileName !== fileName);
-    localStorage.setItem('readingHistory', JSON.stringify(history));
+    localStorage.setItem(historyKey, JSON.stringify(history));
 
     // 同步到云端/本地库目录
-    ipcRenderer.invoke('save-history', history).catch(err => console.error('同步历史记录失败:', err));
+    ipcRenderer.invoke('save-history', history, currentProfile).catch(err => console.error('同步历史记录失败:', err));
+
+    // 同步删除记录到云端
+    ipcRenderer.invoke('save-deleted-history', [fileName], currentProfile).catch(err => console.error('同步删除记录失败:', err));
 
     // 同时清除阅读进度
-    let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+    let allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
     if (allBookProgress[fileName]) {
         delete allBookProgress[fileName];
-        localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+        localStorage.setItem(progressKey, JSON.stringify(allBookProgress));
     }
 
     // 更新显示
@@ -2366,33 +2486,7 @@ function initApp() {
     applyStoredSettings();
 
     // 尝试从云端加载历史记录并合并
-    ipcRenderer.invoke('load-history').then(cloudHistory => {
-        if (cloudHistory && Array.isArray(cloudHistory) && cloudHistory.length > 0) {
-            let localHistory = JSON.parse(localStorage.getItem('readingHistory')) || [];
-
-            // 合并策略：以时间戳为准，合并两个列表
-            // 创建一个 Map 以 fileName 为键
-            const historyMap = new Map();
-
-            // 先放入本地记录
-            localHistory.forEach(item => historyMap.set(item.fileName, item));
-
-            // 再放入云端记录，如果时间戳更新则覆盖
-            cloudHistory.forEach(item => {
-                const existing = historyMap.get(item.fileName);
-                if (!existing || (item.timestamp > existing.timestamp)) {
-                    historyMap.set(item.fileName, item);
-                }
-            });
-
-            // 转回数组并按时间排序
-            const mergedHistory = Array.from(historyMap.values())
-                .sort((a, b) => b.timestamp - a.timestamp);
-
-            localStorage.setItem('readingHistory', JSON.stringify(mergedHistory));
-            updateHistoryDisplay();
-        }
-    }).catch(err => console.error('加载云端历史记录失败:', err));
+    syncCloudHistory();
 
     // 更新历史记录显示
     updateHistoryDisplay();
@@ -2775,7 +2869,8 @@ function saveProgress() {
     }
 
     // 获取所有书籍的进度记录
-    let allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+    const progressKey = getStorageKey('allBookProgress');
+    let allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
 
     // 更新当前书籍的进度
     allBookProgress[currentFileName] = {
@@ -2786,7 +2881,7 @@ function saveProgress() {
     };
 
     // 保存所有书籍的进度
-    localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+    localStorage.setItem(progressKey, JSON.stringify(allBookProgress));
 
     // 更新历史记录
     addToHistory({
@@ -2819,7 +2914,13 @@ async function clearBookCache() {
 }
 
 // 添加返回主页函数
-function backToHome() {
+function backToHome(event) {
+    // 检查是否按下了 Ctrl 键
+    if (event && event.ctrlKey) {
+        toggleProfile();
+        return;
+    }
+
     currentFileName = '';
     currentPage = 0;
     currentChapter = 0;
@@ -3205,7 +3306,8 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
                 document.querySelector('.progress-indicator').style.display = 'block';
 
                 // 恢复进度逻辑
-                const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+                const progressKey = getStorageKey('allBookProgress');
+                const allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
                 let targetChapter = 0;
                 let targetPage = 0;
 
@@ -3219,7 +3321,7 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
                         lastRead: new Date().toISOString(),
                         hasChapters: true
                     };
-                    localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+                    localStorage.setItem(progressKey, JSON.stringify(allBookProgress));
                 } else if (allBookProgress[fileName]) {
                     targetChapter = allBookProgress[fileName].chapter || 0;
                     targetPage = allBookProgress[fileName].page || 0;
@@ -3234,6 +3336,7 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
 
                 addToHistory({
                     fileName: fileName,
+                    filePath: filePath,
                     date: new Date().toLocaleString(),
                     lastPosition: targetPage,
                     chapter: targetChapter
@@ -3260,14 +3363,15 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
         // 如果提供了初始位置，更新 allBookProgress
         // 这样后台加载完成后，detectChapters 能读取到正确的进度
         if (initialPosition > 0 || initialChapter > 0) {
-            const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+            const progressKey = getStorageKey('allBookProgress');
+            const allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
             allBookProgress[fileName] = {
                 page: initialPosition,
                 chapter: initialChapter,
                 lastRead: new Date().toISOString(),
                 hasChapters: true // 假设有章节，detectChapters 会修正
             };
-            localStorage.setItem('allBookProgress', JSON.stringify(allBookProgress));
+            localStorage.setItem(progressKey, JSON.stringify(allBookProgress));
         }
 
         // 强制UI渲染
@@ -3331,7 +3435,8 @@ function processFileContent(buffer, fileName, options = {}) {
                 showNotification(`检测到文件编码: ${encoding}`);
             }
 
-            const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
+            const progressKey = getStorageKey('allBookProgress');
+            const allBookProgress = JSON.parse(localStorage.getItem(progressKey)) || {};
             if (allBookProgress[currentFileName]) {
                 currentPage = allBookProgress[currentFileName].page;
                 currentChapter = allBookProgress[currentFileName].chapter;
@@ -3351,10 +3456,15 @@ function processFileContent(buffer, fileName, options = {}) {
 
             document.getElementById('content').style.display = 'block';
 
+            // 显示阅读控制栏
+            const controls = document.querySelector('.reader-controls');
+            if (controls) controls.style.display = 'block';
+
             detectChapters(text, options);
 
             addToHistory({
                 fileName: currentFileName,
+                filePath: window.currentFilePath,
                 date: new Date().toLocaleString(),
                 lastPosition: currentPage,
                 chapter: currentChapter

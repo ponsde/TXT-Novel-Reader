@@ -131,8 +131,10 @@ async function getAllTxtFiles(dir) {
 const apiHandlers = {
     'save-history': async (args) => {
         const history = args[0];
+        const profile = args[1] || 'default'; // 支持多配置文件
         try {
-            const historyPath = path.join(BASE_DIR, 'reading_history.json');
+            const filename = profile === 'hidden' ? 'reading_history_hidden.json' : 'reading_history.json';
+            const historyPath = path.join(BASE_DIR, filename);
             await fsPromises.writeFile(historyPath, JSON.stringify(history, null, 4));
             return true;
         } catch (error) {
@@ -141,9 +143,11 @@ const apiHandlers = {
         }
     },
 
-    'load-history': async () => {
+    'load-history': async (args) => {
+        const profile = (args && args[0]) || 'default';
         try {
-            const historyPath = path.join(BASE_DIR, 'reading_history.json');
+            const filename = profile === 'hidden' ? 'reading_history_hidden.json' : 'reading_history.json';
+            const historyPath = path.join(BASE_DIR, filename);
             if (fs.existsSync(historyPath)) {
                 const data = await fsPromises.readFile(historyPath, 'utf8');
                 return JSON.parse(data);
@@ -155,65 +159,120 @@ const apiHandlers = {
         }
     },
 
-    'load-config': async () => {
-        const configPath = path.join(BASE_DIR, CONFIG_FILE);
-        // 优先使用环境变量中的 BOOKS_DIR
-        const envBooksDir = process.env.BOOKS_DIR;
-
-        if (!fs.existsSync(configPath)) {
-            const defaultConfig = {
-                baseDir: envBooksDir || path.join(BASE_DIR, 'books'), // 默认书籍目录
-                searchDirs: [envBooksDir || path.join(BASE_DIR, 'books')],
-                wordsPerPage: 4000,
-                maxHistory: 50,
-                fontSize: 18,
-                homePageFontSize: 16,
-                theme: 'light'
-            };
-            // 确保 books 目录存在
-            if (!fs.existsSync(defaultConfig.baseDir)) {
-                try { await fsPromises.mkdir(defaultConfig.baseDir, { recursive: true }); } catch (e) { }
+    'save-deleted-history': async (args) => {
+        const deletedItems = args[0];
+        const profile = args[1] || 'default';
+        try {
+            const filename = profile === 'hidden' ? 'deleted_history_hidden.json' : 'deleted_history.json';
+            const deletedPath = path.join(BASE_DIR, filename);
+            let currentDeleted = [];
+            if (fs.existsSync(deletedPath)) {
+                const data = await fsPromises.readFile(deletedPath, 'utf8');
+                currentDeleted = JSON.parse(data);
             }
-            await fsPromises.writeFile(configPath, JSON.stringify(defaultConfig, null, 4));
-            return defaultConfig;
+            // 合并并去重
+            const newSet = new Set([...currentDeleted, ...deletedItems]);
+            await fsPromises.writeFile(deletedPath, JSON.stringify([...newSet], null, 4));
+            return true;
+        } catch (error) {
+            console.error('保存删除记录失败:', error);
+            return false;
         }
-        const configData = await fsPromises.readFile(configPath, 'utf8');
-        const config = JSON.parse(configData);
-
-        // 检查路径是否存在，不存在则修正为默认
-        // 这对于从其他环境（如 Windows）迁移过来的配置文件很有用
-        let configChanged = false;
-
-        // 如果环境变量设置了 BOOKS_DIR，覆盖配置
-        if (envBooksDir && config.baseDir !== envBooksDir) {
-            config.baseDir = envBooksDir;
-            config.searchDirs = [envBooksDir]; // 重置搜索目录
-            configChanged = true;
-        }
-
-        if (!config.baseDir || !fs.existsSync(config.baseDir)) {
-            config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
-            config.searchDirs = [config.baseDir];
-            configChanged = true;
-
-            // 确保 books 目录存在
-            if (!fs.existsSync(config.baseDir)) {
-                try { await fsPromises.mkdir(config.baseDir, { recursive: true }); } catch (e) { }
-            }
-        }
-
-        if (!config.searchDirs) {
-            config.searchDirs = [config.baseDir];
-            configChanged = true;
-        }
-
-        if (configChanged) {
-            // 保存修正后的配置
-            await fsPromises.writeFile(configPath, JSON.stringify(config, null, 4));
-        }
-
-        return config;
     },
+
+    'load-deleted-history': async (args) => {
+        const profile = (args && args[0]) || 'default';
+        try {
+            const filename = profile === 'hidden' ? 'deleted_history_hidden.json' : 'deleted_history.json';
+            const deletedPath = path.join(BASE_DIR, filename);
+            if (fs.existsSync(deletedPath)) {
+                const data = await fsPromises.readFile(deletedPath, 'utf8');
+                return JSON.parse(data);
+            }
+            return [];
+        } catch (error) {
+            console.error('加载删除记录失败:', error);
+            return [];
+        }
+    },
+
+    'load-deleted-history': async () => {
+        try {
+            const deletedPath = path.join(BASE_DIR, 'deleted_history.json');
+            if (fs.existsSync(deletedPath)) {
+                const data = await fsPromises.readFile(deletedPath, 'utf8');
+                return JSON.parse(data);
+            }
+            return [];
+        } catch (error) {
+            console.error('加载删除记录失败:', error);
+            return [];
+        }
+    },
+    console.error('加载历史记录失败:', error);
+    return [];
+}
+    },
+
+'load-config': async () => {
+    const configPath = path.join(BASE_DIR, CONFIG_FILE);
+    // 优先使用环境变量中的 BOOKS_DIR
+    const envBooksDir = process.env.BOOKS_DIR;
+
+    if (!fs.existsSync(configPath)) {
+        const defaultConfig = {
+            baseDir: envBooksDir || path.join(BASE_DIR, 'books'), // 默认书籍目录
+            searchDirs: [envBooksDir || path.join(BASE_DIR, 'books')],
+            wordsPerPage: 4000,
+            maxHistory: 50,
+            fontSize: 18,
+            homePageFontSize: 16,
+            theme: 'light'
+        };
+        // 确保 books 目录存在
+        if (!fs.existsSync(defaultConfig.baseDir)) {
+            try { await fsPromises.mkdir(defaultConfig.baseDir, { recursive: true }); } catch (e) { }
+        }
+        await fsPromises.writeFile(configPath, JSON.stringify(defaultConfig, null, 4));
+        return defaultConfig;
+    }
+    const configData = await fsPromises.readFile(configPath, 'utf8');
+    const config = JSON.parse(configData);
+
+    // 检查路径是否存在，不存在则修正为默认
+    // 这对于从其他环境（如 Windows）迁移过来的配置文件很有用
+    let configChanged = false;
+
+    // 如果环境变量设置了 BOOKS_DIR，覆盖配置
+    if (envBooksDir && config.baseDir !== envBooksDir) {
+        config.baseDir = envBooksDir;
+        config.searchDirs = [envBooksDir]; // 重置搜索目录
+        configChanged = true;
+    }
+
+    if (!config.baseDir || !fs.existsSync(config.baseDir)) {
+        config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
+        config.searchDirs = [config.baseDir];
+        configChanged = true;
+
+        // 确保 books 目录存在
+        if (!fs.existsSync(config.baseDir)) {
+            try { await fsPromises.mkdir(config.baseDir, { recursive: true }); } catch (e) { }
+        }
+    }
+
+    if (!config.searchDirs) {
+        config.searchDirs = [config.baseDir];
+        configChanged = true;
+    }
+
+    if (configChanged) {
+        // 保存修正后的配置
+        await fsPromises.writeFile(configPath, JSON.stringify(config, null, 4));
+    }
+
+    return config;
+},
 
     'save-config': async (args) => {
         const newSettings = args[0];
@@ -237,217 +296,217 @@ const apiHandlers = {
         return true;
     },
 
-    'read-file': async (args) => {
-        const filePath = args[0];
-        // 安全检查：防止读取系统关键文件，这里简单放行，因为是个人服务器
-        return await fsPromises.readFile(filePath); // 返回 Buffer，JSON.stringify 会将其转换为 {type: 'Buffer', data: [...]}
-    },
+        'read-file': async (args) => {
+            const filePath = args[0];
+            // 安全检查：防止读取系统关键文件，这里简单放行，因为是个人服务器
+            return await fsPromises.readFile(filePath); // 返回 Buffer，JSON.stringify 会将其转换为 {type: 'Buffer', data: [...]}
+        },
 
-    'get-file-size': async (args) => {
-        const filePath = args[0];
-        try {
-            const stats = await fsPromises.stat(filePath);
-            return stats.size;
-        } catch (error) {
-            return 0;
-        }
-    },
-
-    'read-file-chunk': async (args) => {
-        const [filePath, start, length] = args;
-        let fd = null;
-        try {
-            fd = await fsPromises.open(filePath, 'r');
-            const buffer = Buffer.alloc(length);
-            const { bytesRead } = await fd.read(buffer, 0, length, start);
-            return buffer.subarray(0, bytesRead);
-        } catch (error) {
-            console.error('读取文件分片失败:', error);
-            return null;
-        } finally {
-            if (fd) await fd.close();
-        }
-    },
-
-    'get-file-list': async (args) => {
-        // 获取配置
-        const configPath = path.join(BASE_DIR, CONFIG_FILE);
-        let libraryDir = '';
-
-        try {
-            if (fs.existsSync(configPath)) {
-                const configData = await fsPromises.readFile(configPath, 'utf8');
-                const config = JSON.parse(configData);
-                // 优先使用 libraryDir，如果没有则使用 baseDir
-                libraryDir = config.libraryDir || config.baseDir;
-            }
-        } catch (e) { }
-
-        // 如果环境变量强制指定，则使用环境变量
-        if (process.env.BOOKS_DIR) {
-            libraryDir = process.env.BOOKS_DIR;
-        }
-
-        // 如果没有配置路径，使用默认 books 目录
-        if (!libraryDir) {
-            libraryDir = path.join(BASE_DIR, 'books');
-        }
-
-        // 返回树状结构
-        return await getDirectoryTree(libraryDir);
-    },
-
-    'get-file-stat': async (args) => {
-        const filePath = args[0];
-        try {
-            const stats = await fsPromises.stat(filePath);
-            return {
-                size: stats.size,
-                mtime: stats.mtime.getTime()
-            };
-        } catch (error) {
-            return null;
-        }
-    },
-
-    // 列出指定目录下的文件夹（用于Web端选择路径）
-    'list-directory': async (args) => {
-        let dirPath = args[0];
-
-        // 如果未指定路径，默认使用当前工作目录或根目录
-        if (!dirPath) {
-            dirPath = process.cwd();
-        }
-
-        try {
-            const items = [];
-            const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
-
-            // 添加"上级目录"选项（如果不是根目录）
-            const parentDir = path.dirname(dirPath);
-            if (parentDir !== dirPath) {
-                items.push({
-                    name: '..',
-                    path: parentDir,
-                    type: 'directory',
-                    isParent: true
-                });
-            }
-
-            for (const entry of entries) {
-                if (entry.isDirectory()) {
-                    // 忽略隐藏目录
-                    if (entry.name.startsWith('.')) continue;
-
-                    items.push({
-                        name: entry.name,
-                        path: path.join(dirPath, entry.name),
-                        type: 'directory'
-                    });
+            'get-file-size': async (args) => {
+                const filePath = args[0];
+                try {
+                    const stats = await fsPromises.stat(filePath);
+                    return stats.size;
+                } catch (error) {
+                    return 0;
                 }
-            }
+            },
 
-            // 排序
-            items.sort((a, b) => {
-                if (a.isParent) return -1;
-                if (b.isParent) return 1;
-                return a.name.localeCompare(b.name);
-            });
-
-            return {
-                currentPath: dirPath,
-                items: items,
-                separator: path.sep
-            };
-        } catch (error) {
-            console.error(`列出目录失败 ${dirPath}:`, error);
-            return { error: error.message };
-        }
-    }, 'search-file': async (args) => {
-        const [baseDir, fileName] = args;
-        async function searchInDir(dir) {
-            try {
-                const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-                for (const entry of entries) {
-                    const fullPath = path.join(dir, entry.name);
-                    if (entry.isDirectory()) {
-                        const result = await searchInDir(fullPath);
-                        if (result) return result;
-                    } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
-                        return fullPath;
+                'read-file-chunk': async (args) => {
+                    const [filePath, start, length] = args;
+                    let fd = null;
+                    try {
+                        fd = await fsPromises.open(filePath, 'r');
+                        const buffer = Buffer.alloc(length);
+                        const { bytesRead } = await fd.read(buffer, 0, length, start);
+                        return buffer.subarray(0, bytesRead);
+                    } catch (error) {
+                        console.error('读取文件分片失败:', error);
+                        return null;
+                    } finally {
+                        if (fd) await fd.close();
                     }
-                }
-            } catch (error) {
-                console.error(`读取目录 ${dir} 时出错:`, error);
-            }
-            return null;
-        }
-        return await searchInDir(baseDir);
-    },
+                },
 
-    'get-random-file': async (args) => {
-        let baseDir = args[0];
+                    'get-file-list': async (args) => {
+                        // 获取配置
+                        const configPath = path.join(BASE_DIR, CONFIG_FILE);
+                        let libraryDir = '';
 
-        // 如果未提供路径或路径不存在，尝试使用配置中的默认路径
-        if (!baseDir || !fs.existsSync(baseDir)) {
-            try {
-                const config = await apiHandlers['load-config']();
-                baseDir = config.baseDir;
-            } catch (e) {
-                console.error('获取默认路径失败:', e);
-            }
-        }
+                        try {
+                            if (fs.existsSync(configPath)) {
+                                const configData = await fsPromises.readFile(configPath, 'utf8');
+                                const config = JSON.parse(configData);
+                                // 优先使用 libraryDir，如果没有则使用 baseDir
+                                libraryDir = config.libraryDir || config.baseDir;
+                            }
+                        } catch (e) { }
 
-        // 如果仍然无效，尝试使用默认 books 目录
-        if (!baseDir || !fs.existsSync(baseDir)) {
-            baseDir = path.join(BASE_DIR, 'books');
-        }
+                        // 如果环境变量强制指定，则使用环境变量
+                        if (process.env.BOOKS_DIR) {
+                            libraryDir = process.env.BOOKS_DIR;
+                        }
 
-        await loadRandomState(); // 确保状态是最新的
+                        // 如果没有配置路径，使用默认 books 目录
+                        if (!libraryDir) {
+                            libraryDir = path.join(BASE_DIR, 'books');
+                        }
 
-        const txtFiles = await getAllTxtFiles(baseDir);
-        if (txtFiles.length === 0) return null;
+                        // 返回树状结构
+                        return await getDirectoryTree(libraryDir);
+                    },
 
-        const currentBookSet = JSON.stringify(txtFiles.sort());
-        const previousBookSet = JSON.stringify(allAvailableBooks.sort());
+                        'get-file-stat': async (args) => {
+                            const filePath = args[0];
+                            try {
+                                const stats = await fsPromises.stat(filePath);
+                                return {
+                                    size: stats.size,
+                                    mtime: stats.mtime.getTime()
+                                };
+                            } catch (error) {
+                                return null;
+                            }
+                        },
 
-        if (currentBookSet !== previousBookSet) {
-            allAvailableBooks = [...txtFiles];
-            randomizedBooks = [];
-        }
+                            // 列出指定目录下的文件夹（用于Web端选择路径）
+                            'list-directory': async (args) => {
+                                let dirPath = args[0];
 
-        if (randomizedBooks.length >= txtFiles.length) {
-            randomizedBooks = [];
-        }
+                                // 如果未指定路径，默认使用当前工作目录或根目录
+                                if (!dirPath) {
+                                    dirPath = process.cwd();
+                                }
 
-        const availableBooks = txtFiles.filter(book => !randomizedBooks.includes(book));
-        if (availableBooks.length === 0) {
-            randomizedBooks = [];
-            availableBooks = [...txtFiles];
-        }
+                                try {
+                                    const items = [];
+                                    const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
 
-        const randomIndex = Math.floor(Math.random() * availableBooks.length);
-        const selectedBook = availableBooks[randomIndex];
-        randomizedBooks.push(selectedBook);
-        await saveRandomState();
-        return selectedBook;
-    },
+                                    // 添加"上级目录"选项（如果不是根目录）
+                                    const parentDir = path.dirname(dirPath);
+                                    if (parentDir !== dirPath) {
+                                        items.push({
+                                            name: '..',
+                                            path: parentDir,
+                                            type: 'directory',
+                                            isParent: true
+                                        });
+                                    }
 
-    'reset-random-state': async () => {
-        randomizedBooks = [];
-        await saveRandomState();
-        return true;
-    },
+                                    for (const entry of entries) {
+                                        if (entry.isDirectory()) {
+                                            // 忽略隐藏目录
+                                            if (entry.name.startsWith('.')) continue;
 
-    'select-directory': async () => {
-        // Web 端无法弹出选择框，返回 null，前端会处理
-        // 或者我们可以返回一个默认路径
-        return null;
-    },
+                                            items.push({
+                                                name: entry.name,
+                                                path: path.join(dirPath, entry.name),
+                                                type: 'directory'
+                                            });
+                                        }
+                                    }
 
-    'find-and-open-file-location': async () => {
-        return { success: false, error: 'Web 端不支持打开文件位置' };
-    }
+                                    // 排序
+                                    items.sort((a, b) => {
+                                        if (a.isParent) return -1;
+                                        if (b.isParent) return 1;
+                                        return a.name.localeCompare(b.name);
+                                    });
+
+                                    return {
+                                        currentPath: dirPath,
+                                        items: items,
+                                        separator: path.sep
+                                    };
+                                } catch (error) {
+                                    console.error(`列出目录失败 ${dirPath}:`, error);
+                                    return { error: error.message };
+                                }
+                            }, 'search-file': async (args) => {
+                                const [baseDir, fileName] = args;
+                                async function searchInDir(dir) {
+                                    try {
+                                        const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+                                        for (const entry of entries) {
+                                            const fullPath = path.join(dir, entry.name);
+                                            if (entry.isDirectory()) {
+                                                const result = await searchInDir(fullPath);
+                                                if (result) return result;
+                                            } else if (entry.name.toLowerCase() === fileName.toLowerCase()) {
+                                                return fullPath;
+                                            }
+                                        }
+                                    } catch (error) {
+                                        console.error(`读取目录 ${dir} 时出错:`, error);
+                                    }
+                                    return null;
+                                }
+                                return await searchInDir(baseDir);
+                            },
+
+                                'get-random-file': async (args) => {
+                                    let baseDir = args[0];
+
+                                    // 如果未提供路径或路径不存在，尝试使用配置中的默认路径
+                                    if (!baseDir || !fs.existsSync(baseDir)) {
+                                        try {
+                                            const config = await apiHandlers['load-config']();
+                                            baseDir = config.baseDir;
+                                        } catch (e) {
+                                            console.error('获取默认路径失败:', e);
+                                        }
+                                    }
+
+                                    // 如果仍然无效，尝试使用默认 books 目录
+                                    if (!baseDir || !fs.existsSync(baseDir)) {
+                                        baseDir = path.join(BASE_DIR, 'books');
+                                    }
+
+                                    await loadRandomState(); // 确保状态是最新的
+
+                                    const txtFiles = await getAllTxtFiles(baseDir);
+                                    if (txtFiles.length === 0) return null;
+
+                                    const currentBookSet = JSON.stringify(txtFiles.sort());
+                                    const previousBookSet = JSON.stringify(allAvailableBooks.sort());
+
+                                    if (currentBookSet !== previousBookSet) {
+                                        allAvailableBooks = [...txtFiles];
+                                        randomizedBooks = [];
+                                    }
+
+                                    if (randomizedBooks.length >= txtFiles.length) {
+                                        randomizedBooks = [];
+                                    }
+
+                                    const availableBooks = txtFiles.filter(book => !randomizedBooks.includes(book));
+                                    if (availableBooks.length === 0) {
+                                        randomizedBooks = [];
+                                        availableBooks = [...txtFiles];
+                                    }
+
+                                    const randomIndex = Math.floor(Math.random() * availableBooks.length);
+                                    const selectedBook = availableBooks[randomIndex];
+                                    randomizedBooks.push(selectedBook);
+                                    await saveRandomState();
+                                    return selectedBook;
+                                },
+
+                                    'reset-random-state': async () => {
+                                        randomizedBooks = [];
+                                        await saveRandomState();
+                                        return true;
+                                    },
+
+                                        'select-directory': async () => {
+                                            // Web 端无法弹出选择框，返回 null，前端会处理
+                                            // 或者我们可以返回一个默认路径
+                                            return null;
+                                        },
+
+                                            'find-and-open-file-location': async () => {
+                                                return { success: false, error: 'Web 端不支持打开文件位置' };
+                                            }
 };
 
 const server = http.createServer(async (req, res) => {
