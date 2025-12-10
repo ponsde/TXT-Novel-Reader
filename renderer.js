@@ -5,12 +5,15 @@ class SimpleDB {
         this.dbName = dbName;
         this.storeName = storeName;
         this.db = null;
+        this.openPromise = null;
     }
 
     async open() {
         if (this.db) return this.db;
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, 1);
+        if (this.openPromise) return this.openPromise;
+
+        this.openPromise = new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, 2); // 升级版本号以确保 store 创建
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains(this.storeName)) {
@@ -19,32 +22,47 @@ class SimpleDB {
             };
             request.onsuccess = (event) => {
                 this.db = event.target.result;
+                this.openPromise = null;
                 resolve(this.db);
             };
-            request.onerror = (event) => reject(event.target.error);
+            request.onerror = (event) => {
+                this.openPromise = null;
+                reject(event.target.error);
+            };
         });
+        return this.openPromise;
     }
 
     async get(key) {
-        await this.open();
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readonly');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.get(key);
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
+        try {
+            await this.open();
+            return new Promise((resolve, reject) => {
+                const transaction = this.db.transaction([this.storeName], 'readonly');
+                const store = transaction.objectStore(this.storeName);
+                const request = store.get(key);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        } catch (e) {
+            console.error('SimpleDB Get Error:', e);
+            return null;
+        }
     }
 
     async set(key, value) {
-        await this.open();
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction([this.storeName], 'readwrite');
-            const store = transaction.objectStore(this.storeName);
-            const request = store.put(value, key);
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
-        });
+        try {
+            await this.open();
+            return new Promise((resolve, reject) => {
+                const transaction = this.db.transaction([this.storeName], 'readwrite');
+                const store = transaction.objectStore(this.storeName);
+                const request = store.put(value, key);
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        } catch (e) {
+            console.error('SimpleDB Set Error:', e);
+            throw e;
+        }
     }
 
     async clear() {
@@ -106,14 +124,23 @@ try {
                     const statResult = await statResponse.json();
                     const stats = statResult.data;
 
-                    if (!stats) return null;
+                    if (!stats) {
+                        console.warn('无法获取文件状态，跳过缓存检查:', filePath);
+                        return null;
+                    }
 
                     // 2. 生成缓存键 (filePath + size + mtime)
                     const cacheKey = `${filePath}-${stats.size}-${stats.mtime}`;
+                    console.log('检查缓存 Key:', cacheKey);
 
                     // 3. 检查 IndexedDB
                     try {
                         const cachedData = await webBookCache.get(cacheKey);
+                        if (cachedData) {
+                            console.log('Web 缓存命中!');
+                        } else {
+                            console.log('Web 缓存未命中');
+                        }
                         return cachedData || null;
                     } catch (e) {
                         console.error('读取 Web 缓存失败:', e);
@@ -135,14 +162,19 @@ try {
                     const statResult = await statResponse.json();
                     const stats = statResult.data;
 
-                    if (!stats) return false;
+                    if (!stats) {
+                        console.error('保存缓存失败: 无法获取文件状态', filePath);
+                        return false;
+                    }
 
                     // 2. 生成缓存键
                     const cacheKey = `${filePath}-${stats.size}-${stats.mtime}`;
+                    console.log('保存缓存 Key:', cacheKey);
 
                     // 3. 保存到 IndexedDB
                     try {
                         await webBookCache.set(cacheKey, data);
+                        console.log('Web 缓存保存成功');
                         return true;
                     } catch (e) {
                         console.error('保存 Web 缓存失败:', e);
@@ -280,64 +312,16 @@ function detectChapters(text, options = {}) {
 
         chapters = result.chapters;
 
-        if (result.noChapters) {
-            // 如果没有检测到章节，存储整个文本内容
-            // 按照固定字数(wordsPerPage)而不是按行拆分文本
-            const contentText = text;
-            currentContent = [];
+        // 如果没有检测到章节，或者章节列表为空，将整个文本作为一个章节
+        if (result.noChapters || !chapters || chapters.length === 0) {
+            chapters = [{
+                title: "全文",
+                content: text,
+                index: 0
+            }];
+        }
 
-            // 每wordsPerPage个字符分页，而不是按行
-            for (let i = 0; i < contentText.length; i += wordsPerPage) {
-                currentContent.push(contentText.slice(i, i + wordsPerPage));
-            }
-
-            // 确保至少有一页内容
-            if (currentContent.length === 0 && contentText.length > 0) {
-                currentContent.push(contentText);
-            }
-
-            // 计算总页数
-            const totalPages = currentContent.length;
-
-            // 如果遮罩层是显示的，说明用户正在等待加载，此时不应视为后台更新
-            const isOverlayVisible = document.getElementById('loading-overlay').style.display !== 'none';
-            const effectiveIsBackground = options.isBackground && !isOverlayVisible;
-
-            // 检查是否有保存的进度
-            const allBookProgress = JSON.parse(localStorage.getItem('allBookProgress')) || {};
-            if (allBookProgress[currentFileName]) {
-                // 恢复保存的页码
-                currentPage = allBookProgress[currentFileName].page || 0;
-                // 确保页码有效
-                if (currentPage >= totalPages) {
-                    currentPage = 0;
-                }
-            } else if (!effectiveIsBackground) {
-                // 只有在非后台更新时才重置页码
-                currentPage = 0;
-            }
-            // 如果是后台更新且没有保存进度（例如从预览模式升级），保持当前 currentPage 不变
-
-            // 显示内容
-            if (pageMode === 'scroll') {
-                showAllContent({ isBackground: effectiveIsBackground });
-            } else {
-                showTextPage(currentPage, totalPages, {
-                    ...options,
-                    isBackground: effectiveIsBackground
-                });
-            }
-
-            // 确保控件可见
-            document.querySelector('.navigation-buttons').style.display = 'flex';
-            document.querySelector('.progress-indicator').style.display = 'block';
-
-            // 对于无章节模式，通常不需要等待特定章节，直接隐藏遮罩
-            if (isOverlayVisible) {
-                document.querySelector('.loading-message').textContent = '加载完成';
-                document.getElementById('loading-overlay').style.display = 'none';
-            }
-        } else if (chapters.length > 0) {
+        if (chapters.length > 0) {
             // 保存到缓存
             if (window.currentFilePath) {
                 ipcRenderer.invoke('save-book-cache', window.currentFilePath, { chapters: chapters })
