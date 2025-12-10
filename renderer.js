@@ -2976,7 +2976,9 @@ async function showServerLibrary() {
                     return `
                                 <div class="tree-item file" 
                                      data-path="${item.path.replace(/"/g, '&quot;')}" 
-                                     data-name="${item.name.replace(/"/g, '&quot;')}">
+                                     data-name="${item.name.replace(/"/g, '&quot;')}"
+                                     data-size="${item.size}"
+                                     data-mtime="${item.mtime || 0}">
                                     <div class="tree-content" style="padding-left: ${paddingLeft}px">
                                         <span class="tree-icon">📄</span>
                                         <span class="tree-name">${item.name}</span>
@@ -3126,7 +3128,10 @@ async function showServerLibrary() {
                 e.stopPropagation();
                 const path = item.getAttribute('data-path');
                 const name = item.getAttribute('data-name');
-                loadServerBook(path, name);
+                const size = parseInt(item.getAttribute('data-size') || '0');
+                const mtime = parseInt(item.getAttribute('data-mtime') || '0');
+
+                loadServerBook(path, name, { size, mtime });
                 closeModal();
             });
         });
@@ -3138,9 +3143,9 @@ async function showServerLibrary() {
     }
 }
 
-async function loadServerBook(filePath, fileName) {
+async function loadServerBook(filePath, fileName, fileInfo = null) {
     try {
-        await loadAndRenderBook(filePath, fileName);
+        await loadAndRenderBook(filePath, fileName, 0, 0, fileInfo);
     } catch (error) {
         console.error('加载书籍失败:', error);
         showNotification('加载书籍失败: ' + error.message);
@@ -3148,7 +3153,7 @@ async function loadServerBook(filePath, fileName) {
 }
 
 // 智能加载书籍（支持大文件分片加载）
-async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initialChapter = 0) {
+async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initialChapter = 0, fileInfo = null) {
     try {
         document.getElementById('loading-overlay').style.display = 'flex';
         document.querySelector('.loading-message').textContent = `正在加载: ${fileName}...`;
@@ -3158,7 +3163,16 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
 
         // 尝试从缓存加载
         try {
-            const cachedData = await ipcRenderer.invoke('check-book-cache', filePath);
+            // 如果提供了 fileInfo (包含 size 和 mtime)，则可以直接生成 key，避免一次网络请求
+            let cachedData = null;
+            if (fileInfo && fileInfo.size && fileInfo.mtime && isWebMode) {
+                const cacheKey = `${filePath}-${fileInfo.size}-${fileInfo.mtime}`;
+                console.log('使用预知信息检查缓存:', cacheKey);
+                cachedData = await webBookCache.get(cacheKey);
+            } else {
+                cachedData = await ipcRenderer.invoke('check-book-cache', filePath);
+            }
+
             if (cachedData && cachedData.chapters && cachedData.chapters.length > 0) {
                 console.log('命中缓存，使用缓存数据');
                 chapters = cachedData.chapters;

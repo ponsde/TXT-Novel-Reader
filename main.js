@@ -399,12 +399,14 @@ async function getDirectoryTree(dir, relativePath = '') {
                     });
                 }
             } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+                const stats = fs.statSync(fullPath);
                 items.push({
                     name: entry.name,
                     path: fullPath,
                     relativePath: entryRelativePath,
                     type: 'file',
-                    size: fs.statSync(fullPath).size
+                    size: stats.size,
+                    mtime: stats.mtime.getTime()
                 });
             }
         }
