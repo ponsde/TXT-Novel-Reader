@@ -331,7 +331,8 @@ function detectChapters(text, options = {}) {
                     .catch(err => console.error('保存缓存失败:', err));
             }
 
-            updateChapterList();
+            isChapterListDirty = true; // 标记目录需要更新
+            // updateChapterList(); // 延迟渲染
             // 显示翻页按钮
             document.querySelector('.navigation-buttons').style.display = 'flex';
             document.querySelector('.progress-indicator').style.display = 'block';
@@ -987,7 +988,10 @@ function toggleChapterList() {
             return;
         }
 
-        updateChapterList();
+        // 强制更新目录（如果 dirty）
+        if (isChapterListDirty) {
+            updateChapterList();
+        }
         chapterList.classList.remove('hidden');
 
         // 滚动到当前章节
@@ -1210,7 +1214,11 @@ document.addEventListener('keydown', function (e) {
     // }
 });
 
+let isChapterListDirty = true;
+
 function updateChapterList() {
+    if (!isChapterListDirty) return;
+
     const chapterList = document.getElementById('chapter-list');
     const headerHtml = `
                 <div class="chapter-list-header">
@@ -1218,12 +1226,16 @@ function updateChapterList() {
                     <button class="close-btn" onclick="toggleChapterList()">×</button>
                 </div>
             `;
+
+    // 优化：如果章节太多，分批渲染或者简化渲染
+    // 这里暂时保持原样，但标记为已更新
     const listHtml = chapters.map((chapter, index) =>
         `<div class="chapter-item ${index === currentChapter ? 'active' : ''}" 
                       onclick="jumpToChapter(${index}); toggleChapterList();">${chapter.title}</div>`
     ).join('');
 
     chapterList.innerHTML = headerHtml + '<div class="chapter-list-content">' + listHtml + '</div>';
+    isChapterListDirty = false;
 }
 
 // 修改 loadHistoryRecord 和 searchFile 函数，支持多本书的阅读进度
@@ -3187,7 +3199,8 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
                 if (mobileTitle) mobileTitle.textContent = titleText;
                 document.getElementById('content').style.display = 'block';
 
-                updateChapterList();
+                updateChapterList(); // 标记为 dirty，实际渲染延迟到打开菜单时
+                isChapterListDirty = true;
                 document.querySelector('.navigation-buttons').style.display = 'flex';
                 document.querySelector('.progress-indicator').style.display = 'block';
 
