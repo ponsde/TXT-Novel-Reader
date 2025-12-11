@@ -1112,6 +1112,15 @@ function toggleChapterList() {
         // 强制更新目录（如果 dirty）
         if (isChapterListDirty) {
             updateChapterList();
+        } else {
+            // 如果目录没有重建，手动更新 active 状态
+            const oldActive = chapterList.querySelector('.chapter-item.active');
+            if (oldActive) oldActive.classList.remove('active');
+
+            const content = chapterList.querySelector('.chapter-list-content');
+            if (content && content.children[currentChapter]) {
+                content.children[currentChapter].classList.add('active');
+            }
         }
         chapterList.classList.remove('hidden');
 
