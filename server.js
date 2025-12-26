@@ -180,6 +180,26 @@ const apiHandlers = {
         }
     },
 
+    'remove-from-deleted-history': async (args) => {
+        const itemsToRemove = args[0]; // Array of filenames
+        const profile = args[1] || 'default';
+        try {
+            const filename = profile === 'hidden' ? 'deleted_history_hidden.json' : 'deleted_history.json';
+            const deletedPath = path.join(BASE_DIR, filename);
+            if (fs.existsSync(deletedPath)) {
+                const data = await fsPromises.readFile(deletedPath, 'utf8');
+                let currentDeleted = JSON.parse(data);
+                const removeSet = new Set(itemsToRemove);
+                currentDeleted = currentDeleted.filter(item => !removeSet.has(item));
+                await fsPromises.writeFile(deletedPath, JSON.stringify(currentDeleted, null, 4));
+            }
+            return true;
+        } catch (error) {
+            console.error('移除删除记录失败:', error);
+            return false;
+        }
+    },
+
     'load-deleted-history': async (args) => {
         const profile = (args && args[0]) || 'default';
         try {
@@ -524,7 +544,8 @@ const server = http.createServer(async (req, res) => {
                     if (acceptEncoding.includes('br')) {
                         res.writeHead(200, {
                             'Content-Type': 'application/octet-stream',
-                            'Content-Encoding': 'br'
+                            'Content-Encoding': 'br',
+                            'Cache-Control': 'no-store'
                         });
 
                         const brotli = zlib.createBrotliCompress();
@@ -536,7 +557,8 @@ const server = http.createServer(async (req, res) => {
                         // 回退到 GZIP
                         res.writeHead(200, {
                             'Content-Type': 'application/octet-stream',
-                            'Content-Encoding': 'gzip'
+                            'Content-Encoding': 'gzip',
+                            'Cache-Control': 'no-store'
                         });
 
                         const gzip = zlib.createGzip();
@@ -548,7 +570,8 @@ const server = http.createServer(async (req, res) => {
                         // 不支持压缩
                         res.writeHead(200, {
                             'Content-Type': 'application/octet-stream',
-                            'Content-Length': stat.size
+                            'Content-Length': stat.size,
+                            'Cache-Control': 'no-store'
                         });
 
                         const stream = fs.createReadStream(filePath);
@@ -593,7 +616,10 @@ const server = http.createServer(async (req, res) => {
                         // 或者我们可以直接发送 base64，但前端代码可能期待 Buffer 结构
                     }
 
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.writeHead(200, {
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-store'
+                    });
                     res.end(JSON.stringify({ data: result }));
                 } else {
                     res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -630,7 +656,10 @@ const server = http.createServer(async (req, res) => {
 
     try {
         const content = await fsPromises.readFile(filePath);
-        res.writeHead(200, { 'Content-Type': contentType });
+        res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache' // 总是验证，确保开发调试时文件更新及时生效
+        });
         res.end(content, 'utf-8');
     } catch (error) {
         if (error.code === 'ENOENT') {
@@ -643,12 +672,10 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '127.0.0.1', () => {
     console.log(`\n=== 优雅阅读器 Web 服务已启动 ===`);
     console.log(`端口: ${PORT}`);
     console.log(`\n访问方式:`);
     console.log(`1. 如果你在云服务器上操作: http://localhost:${PORT}/`);
-    console.log(`2. 如果你在其他电脑/手机上: http://<你的云服务器公网IP>:${PORT}/`);
-    console.log(`   (例如: http://123.45.67.89:${PORT}/)`);
-    console.log(`\n注意: 请务必在云服务器控制台的安全组设置中，放行 TCP ${PORT} 端口，否则无法访问。`);
+    console.log(`2. 通过反向代理访问 (推荐)`);
 });

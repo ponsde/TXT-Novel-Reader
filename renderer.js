@@ -101,7 +101,8 @@ try {
                     const response = await fetch('/api/raw-read', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filePath: args[0] })
+                        body: JSON.stringify({ filePath: args[0] }),
+                        cache: 'no-store'
                     });
 
                     if (!response.ok) {
@@ -119,7 +120,8 @@ try {
                     const statResponse = await fetch('/api/invoke', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] })
+                        body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] }),
+                        cache: 'no-store'
                     });
                     const statResult = await statResponse.json();
                     const stats = statResult.data;
@@ -157,7 +159,8 @@ try {
                     const statResponse = await fetch('/api/invoke', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] })
+                        body: JSON.stringify({ channel: 'get-file-stat', args: [filePath] }),
+                        cache: 'no-store'
                     });
                     const statResult = await statResponse.json();
                     const stats = statResult.data;
@@ -182,10 +185,15 @@ try {
                     }
                 }
 
+                // 判断是否需要 keepalive (针对保存操作)
+                const isSaveOperation = channel.startsWith('save-') || channel.startsWith('remove-');
+
                 const response = await fetch('/api/invoke', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ channel, args })
+                    body: JSON.stringify({ channel, args }),
+                    cache: 'no-store',
+                    keepalive: isSaveOperation
                 });
 
                 if (!response.ok) {
@@ -1535,6 +1543,9 @@ function addToHistory(record) {
 
     // 同步到云端/本地库目录
     ipcRenderer.invoke('save-history', history, currentProfile).catch(err => console.error('同步历史记录失败:', err));
+
+    // 确保从已删除列表中移除，防止刷新后消失
+    ipcRenderer.invoke('remove-from-deleted-history', [record.fileName], currentProfile).catch(err => console.error('移除删除记录失败:', err));
 
     // 如果当前在主页，则更新历史记录显示
     if (!currentFileName) {
