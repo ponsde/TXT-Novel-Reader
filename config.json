@@ -7,5 +7,10 @@
     "maxHistory": 50,
     "fontSize": 18,
     "homePageFontSize": 16,
-    "theme": "light"
+    "theme": "light",
+    "hiddenLibraryDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧",
+    "hiddenBaseDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧",
+    "hiddenSearchDirs": [
+        "/home/ubuntu/TXT-Novel-Reader/xs/旧"
+    ]
 }

@@ -14,8 +14,8 @@ const RANDOM_STATE_FILE = 'random_state.json';
 const CONFIG_FILE = 'config.json';
 
 // 全局变量
-let randomizedBooks = [];
-let allAvailableBooks = [];
+// key: baseDir, value: { randomizedBooks: [], allAvailableBooks: [] }
+let randomStateMap = {};
 
 // 辅助函数：加载随机状态
 async function loadRandomState() {
@@ -24,13 +24,17 @@ async function loadRandomState() {
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
             const state = JSON.parse(stateData);
-            randomizedBooks = state.randomizedBooks || [];
-            allAvailableBooks = state.allAvailableBooks || [];
+            
+            // 兼容旧格式
+            if (Array.isArray(state.randomizedBooks)) {
+                randomStateMap = {};
+            } else {
+                randomStateMap = state.randomStateMap || {};
+            }
         }
     } catch (error) {
         console.error('加载随机状态失败:', error);
-        randomizedBooks = [];
-        allAvailableBooks = [];
+        randomStateMap = {};
     }
 }
 
@@ -39,8 +43,7 @@ async function saveRandomState() {
     try {
         const stateFilePath = path.join(BASE_DIR, RANDOM_STATE_FILE);
         const state = {
-            randomizedBooks,
-            allAvailableBooks,
+            randomStateMap,
             timestamp: new Date().toISOString()
         };
         await fsPromises.writeFile(stateFilePath, JSON.stringify(state, null, 4));
@@ -331,18 +334,21 @@ const apiHandlers = {
     },
 
     'get-file-list': async (args) => {
-        // 获取配置
-        const configPath = path.join(BASE_DIR, CONFIG_FILE);
-        let libraryDir = '';
+        let libraryDir = args && args[0];
 
-        try {
-            if (fs.existsSync(configPath)) {
-                const configData = await fsPromises.readFile(configPath, 'utf8');
-                const config = JSON.parse(configData);
-                // 优先使用 libraryDir，如果没有则使用 baseDir
-                libraryDir = config.libraryDir || config.baseDir;
-            }
-        } catch (e) { }
+        // 如果参数没有提供路径，则回退到读取配置
+        if (!libraryDir) {
+            // 获取配置
+            const configPath = path.join(BASE_DIR, CONFIG_FILE);
+            try {
+                if (fs.existsSync(configPath)) {
+                    const configData = await fsPromises.readFile(configPath, 'utf8');
+                    const config = JSON.parse(configData);
+                    // 优先使用 libraryDir，如果没有则使用 baseDir
+                    libraryDir = config.libraryDir || config.baseDir;
+                }
+            } catch (e) { }
+        }
 
         // 如果环境变量强制指定，则使用环境变量
         if (process.env.BOOKS_DIR) {
@@ -360,6 +366,7 @@ const apiHandlers = {
 
     'get-file-stat': async (args) => {
         const filePath = args[0];
+        console.log(`[get-file-stat] Checking: ${filePath}`);
         try {
             const stats = await fsPromises.stat(filePath);
             return {
@@ -367,6 +374,7 @@ const apiHandlers = {
                 mtime: stats.mtime.getTime()
             };
         } catch (error) {
+            console.error(`[get-file-stat] Error: ${error.message}`);
             return null;
         }
     },
@@ -466,36 +474,67 @@ const apiHandlers = {
 
         await loadRandomState(); // 确保状态是最新的
 
+        // 确保 baseDir 是字符串
+        const dirKey = baseDir || 'default';
+        
+        // 初始化该目录的状态
+        if (!randomStateMap[dirKey]) {
+            randomStateMap[dirKey] = {
+                randomizedBooks: [],
+                allAvailableBooks: []
+            };
+        }
+        
+        const state = randomStateMap[dirKey];
+        // 确保属性存在
+        if (!state.randomizedBooks) state.randomizedBooks = [];
+        if (!state.allAvailableBooks) state.allAvailableBooks = [];
+
         const txtFiles = await getAllTxtFiles(baseDir);
         if (txtFiles.length === 0) return null;
 
         const currentBookSet = JSON.stringify(txtFiles.sort());
-        const previousBookSet = JSON.stringify(allAvailableBooks.sort());
+        const previousBookSet = JSON.stringify(state.allAvailableBooks.sort());
 
         if (currentBookSet !== previousBookSet) {
-            allAvailableBooks = [...txtFiles];
-            randomizedBooks = [];
+            state.allAvailableBooks = [...txtFiles];
+            state.randomizedBooks = [];
         }
 
-        if (randomizedBooks.length >= txtFiles.length) {
-            randomizedBooks = [];
+        if (state.randomizedBooks.length >= txtFiles.length) {
+            state.randomizedBooks = [];
         }
 
-        const availableBooks = txtFiles.filter(book => !randomizedBooks.includes(book));
+        let availableBooks = txtFiles.filter(book => !state.randomizedBooks.includes(book));
         if (availableBooks.length === 0) {
-            randomizedBooks = [];
+            state.randomizedBooks = [];
             availableBooks = [...txtFiles];
         }
 
         const randomIndex = Math.floor(Math.random() * availableBooks.length);
         const selectedBook = availableBooks[randomIndex];
-        randomizedBooks.push(selectedBook);
+        state.randomizedBooks.push(selectedBook);
         await saveRandomState();
         return selectedBook;
     },
 
-    'reset-random-state': async () => {
-        randomizedBooks = [];
+    'reset-random-state': async (args) => {
+        const baseDir = args && args[0];
+        
+        if (baseDir) {
+            // 如果指定了目录，只重置该目录
+            if (randomStateMap[baseDir]) {
+                randomStateMap[baseDir].randomizedBooks = [];
+            }
+        } else {
+            // 如果未指定，重置所有目录的随机状态
+            for (const key in randomStateMap) {
+                if (randomStateMap[key]) {
+                    randomStateMap[key].randomizedBooks = [];
+                }
+            }
+        }
+        
         await saveRandomState();
         return true;
     },
@@ -512,6 +551,14 @@ const apiHandlers = {
 };
 
 const server = http.createServer(async (req, res) => {
+    // 全局错误处理，防止崩溃
+    req.on('error', (err) => {
+        console.error('Request error:', err);
+    });
+    res.on('error', (err) => {
+        console.error('Response error:', err);
+    });
+
     // 处理 CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -525,157 +572,174 @@ const server = http.createServer(async (req, res) => {
 
     const parsedUrl = url.parse(req.url, true);
 
-    // 优化的文件读取接口 (流式传输)
-    if (parsedUrl.pathname === '/api/raw-read' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', async () => {
-            try {
-                const { filePath } = JSON.parse(body);
-
-                // 简单的安全检查
-                // 注意：这里应该有更严格的路径检查，但为了保持与原 read-file 逻辑一致（允许读取任意文件），我们暂时只做基本错误处理
-
+    try {
+        // 优化的文件读取接口 (流式传输)
+        if (parsedUrl.pathname === '/api/raw-read' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => { body += chunk.toString(); });
+            req.on('end', async () => {
                 try {
-                    const stat = await fsPromises.stat(filePath);
-                    const acceptEncoding = req.headers['accept-encoding'] || '';
+                    const { filePath } = JSON.parse(body);
+                    console.log(`[raw-read] Reading file: ${filePath}`);
 
-                    // 优先使用 Brotli (br) 压缩，压缩率更高
-                    if (acceptEncoding.includes('br')) {
-                        res.writeHead(200, {
+                    // 简单的安全检查
+                    try {
+                        const stat = await fsPromises.stat(filePath);
+                        
+                        // 启用压缩支持
+                        const acceptEncoding = req.headers['accept-encoding'] || '';
+                        const rawStream = fs.createReadStream(filePath);
+                        
+                        // 设置基本头部
+                        const headers = {
                             'Content-Type': 'application/octet-stream',
-                            'Content-Encoding': 'br',
                             'Cache-Control': 'no-store'
-                        });
+                        };
 
-                        const brotli = zlib.createBrotliCompress();
-                        const stream = fs.createReadStream(filePath);
-                        stream.pipe(brotli).pipe(res);
+                        let outputStream = rawStream;
 
-                        stream.on('error', (error) => console.error('Stream error:', error));
-                    } else if (acceptEncoding.includes('gzip')) {
-                        // 回退到 GZIP
-                        res.writeHead(200, {
-                            'Content-Type': 'application/octet-stream',
-                            'Content-Encoding': 'gzip',
-                            'Cache-Control': 'no-store'
-                        });
+                        // 根据客户端支持的编码进行压缩
+                        if (acceptEncoding.includes('gzip')) {
+                            headers['Content-Encoding'] = 'gzip';
+                            res.writeHead(200, headers);
+                            const gzip = zlib.createGzip();
+                            outputStream = rawStream.pipe(gzip);
+                        } else if (acceptEncoding.includes('deflate')) {
+                            headers['Content-Encoding'] = 'deflate';
+                            res.writeHead(200, headers);
+                            const deflate = zlib.createDeflate();
+                            outputStream = rawStream.pipe(deflate);
+                        } else {
+                            headers['Content-Length'] = stat.size;
+                            res.writeHead(200, headers);
+                        }
 
-                        const gzip = zlib.createGzip();
-                        const stream = fs.createReadStream(filePath);
-                        stream.pipe(gzip).pipe(res);
+                        outputStream.pipe(res);
 
-                        stream.on('error', (error) => console.error('Stream error:', error));
-                    } else {
-                        // 不支持压缩
-                        res.writeHead(200, {
-                            'Content-Type': 'application/octet-stream',
-                            'Content-Length': stat.size,
-                            'Cache-Control': 'no-store'
-                        });
-
-                        const stream = fs.createReadStream(filePath);
-                        stream.pipe(res);
-
-                        stream.on('error', (error) => {
+                        outputStream.on('error', (error) => {
                             console.error('Stream error:', error);
                             if (!res.headersSent) {
                                 res.writeHead(500);
                                 res.end(JSON.stringify({ error: 'File read error' }));
                             }
                         });
+                        
+                        // 监听原始流的错误，防止未捕获异常
+                        rawStream.on('error', (error) => {
+                            console.error('Raw stream error:', error);
+                            // 如果响应头还没发送，可以尝试发送错误
+                            // 但通常 outputStream 的 error 也会触发
+                        });
+                        
+                    } catch (error) {
+                        console.error('File access error:', error);
+                        if (!res.headersSent) {
+                            res.writeHead(404, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: 'File not found or inaccessible' }));
+                        }
                     }
                 } catch (error) {
-                    console.error('File access error:', error);
-                    res.writeHead(404, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: 'File not found or inaccessible' }));
-                }
-            } catch (error) {
-                console.error('API Error:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: error.message }));
-            }
-        });
-        return;
-    }
-
-    // API 路由
-    if (parsedUrl.pathname === '/api/invoke' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', async () => {
-            try {
-                const { channel, args } = JSON.parse(body);
-                if (apiHandlers[channel]) {
-                    const result = await apiHandlers[channel](args || []);
-
-                    // 特殊处理 Buffer 数据 (read-file)
-                    if (Buffer.isBuffer(result)) {
-                        // 直接发送 Buffer 数据可能在 JSON.stringify 中变成对象
-                        // 我们保持一致性，前端会收到 { type: 'Buffer', data: [...] }
-                        // 或者我们可以直接发送 base64，但前端代码可能期待 Buffer 结构
+                    console.error('API Error:', error);
+                    if (!res.headersSent) {
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: error.message }));
                     }
-
-                    res.writeHead(200, {
-                        'Content-Type': 'application/json',
-                        'Cache-Control': 'no-store'
-                    });
-                    res.end(JSON.stringify({ data: result }));
-                } else {
-                    res.writeHead(404, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: `Unknown channel: ${channel}` }));
                 }
-            } catch (error) {
-                console.error('API Error:', error);
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: error.message }));
+            });
+            return;
+        }
+
+        // API 路由
+        if (parsedUrl.pathname === '/api/invoke' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => { body += chunk.toString(); });
+            req.on('end', async () => {
+                try {
+                    const { channel, args } = JSON.parse(body);
+                    console.log(`[API] Invoke: ${channel}`);
+
+                    if (apiHandlers[channel]) {
+                        const result = await apiHandlers[channel](args);
+                        if (!res.headersSent) {
+                            res.writeHead(200, {
+                                'Content-Type': 'application/json',
+                                'Cache-Control': 'no-store'
+                            });
+                            res.end(JSON.stringify({ data: result }));
+                        }
+                    } else {
+                        if (!res.headersSent) {
+                            res.writeHead(404, { 'Content-Type': 'application/json' });
+                            res.end(JSON.stringify({ error: `Unknown channel: ${channel}` }));
+                        }
+                    }
+                } catch (error) {
+                    console.error('API Error:', error);
+                    if (!res.headersSent) {
+                        res.writeHead(500, { 'Content-Type': 'application/json' });
+                        res.end(JSON.stringify({ error: error.message }));
+                    }
+                }
+            });
+            return;
+        }
+
+        // 静态文件服务
+        let filePath = path.join(BASE_DIR, parsedUrl.pathname === '/' ? 'index.html' : parsedUrl.pathname);
+
+        // 防止目录遍历攻击
+        if (!filePath.startsWith(BASE_DIR)) {
+            res.writeHead(403);
+            res.end('Forbidden');
+            return;
+        }
+
+        const extname = path.extname(filePath);
+        let contentType = 'text/html';
+        switch (extname) {
+            case '.js': contentType = 'text/javascript'; break;
+            case '.css': contentType = 'text/css'; break;
+            case '.json': contentType = 'application/json'; break;
+            case '.png': contentType = 'image/png'; break;
+            case '.jpg': contentType = 'image/jpg'; break;
+        }
+
+        try {
+            const content = await fsPromises.readFile(filePath);
+            res.writeHead(200, {
+                'Content-Type': contentType,
+                'Cache-Control': 'no-cache' // 总是验证，确保开发调试时文件更新及时生效
+            });
+            res.end(content, 'utf-8');
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                res.writeHead(404);
+                res.end('File not found');
+            } else {
+                res.writeHead(500);
+                res.end(`Server Error: ${error.code}`);
             }
-        });
-        return;
-    }
-
-    // 静态文件服务
-    let filePath = path.join(BASE_DIR, parsedUrl.pathname === '/' ? 'index.html' : parsedUrl.pathname);
-
-    // 防止目录遍历攻击
-    if (!filePath.startsWith(BASE_DIR)) {
-        res.writeHead(403);
-        res.end('Forbidden');
-        return;
-    }
-
-    const extname = path.extname(filePath);
-    let contentType = 'text/html';
-    switch (extname) {
-        case '.js': contentType = 'text/javascript'; break;
-        case '.css': contentType = 'text/css'; break;
-        case '.json': contentType = 'application/json'; break;
-        case '.png': contentType = 'image/png'; break;
-        case '.jpg': contentType = 'image/jpg'; break;
-    }
-
-    try {
-        const content = await fsPromises.readFile(filePath);
-        res.writeHead(200, {
-            'Content-Type': contentType,
-            'Cache-Control': 'no-cache' // 总是验证，确保开发调试时文件更新及时生效
-        });
-        res.end(content, 'utf-8');
-    } catch (error) {
-        if (error.code === 'ENOENT') {
-            res.writeHead(404);
-            res.end('File not found');
-        } else {
+        }
+    } catch (err) {
+        console.error('Server processing error:', err);
+        if (!res.headersSent) {
             res.writeHead(500);
-            res.end(`Server Error: ${error.code}`);
+            res.end('Internal Server Error');
         }
     }
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+// 防止进程崩溃
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`\n=== 优雅阅读器 Web 服务已启动 ===`);
     console.log(`端口: ${PORT}`);
-    console.log(`\n访问方式:`);
-    console.log(`1. 如果你在云服务器上操作: http://localhost:${PORT}/`);
-    console.log(`2. 通过反向代理访问 (推荐)`);
+    console.log(`Server running at http://localhost:${PORT}/`);
 });

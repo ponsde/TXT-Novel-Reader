@@ -58,9 +58,11 @@ jspm_packages/
 # dotenv environment variables file
 .env 
 books/
+xs/
 
 # User Data
 reading_history.json
+reading_history_hidden.json
 config.json
 random_state.json
 book_cache/

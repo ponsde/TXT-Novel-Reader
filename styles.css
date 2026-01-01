@@ -842,8 +842,7 @@ body.dark-mode .setting-group span {
         min-width: auto;
     }
 }
-
-/* 移动端历史记录样式优化 */
+    /* 移动端历史记录样式优化 */
 .history-list {
     padding: 10px 0;
 }

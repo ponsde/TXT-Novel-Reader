@@ -23,8 +23,8 @@ const BASE_DIR = __dirname;
 const RANDOM_STATE_FILE = 'random_state.json';
 
 // 全局变量存储随机状态
-let randomizedBooks = [];
-let allAvailableBooks = [];
+// key: baseDir, value: { randomizedBooks: [], allAvailableBooks: [] }
+let randomStateMap = {};
 
 // 加载随机状态
 async function loadRandomState() {
@@ -34,15 +34,21 @@ async function loadRandomState() {
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
             const state = JSON.parse(stateData);
-            randomizedBooks = state.randomizedBooks || [];
-            allAvailableBooks = state.allAvailableBooks || [];
-            console.log(`已加载随机状态: ${randomizedBooks.length}/${allAvailableBooks.length} 本书已随机`);
+            
+            // 兼容旧格式
+            if (Array.isArray(state.randomizedBooks)) {
+                // 如果是旧格式，将其归入默认路径（假设为空字符串或默认路径）
+                // 但由于我们不知道旧的 baseDir 是什么，这里可能只能丢弃或尝试迁移
+                // 为了简单起见，我们初始化为空对象，后续会根据 baseDir 填充
+                randomStateMap = {};
+            } else {
+                randomStateMap = state.randomStateMap || {};
+            }
+            console.log(`已加载随机状态`);
         }
     } catch (error) {
         console.error('加载随机状态失败:', error);
-        // 加载失败时重置状态
-        randomizedBooks = [];
-        allAvailableBooks = [];
+        randomStateMap = {};
     }
 }
 
@@ -52,8 +58,7 @@ async function saveRandomState() {
         const stateFilePath = path.join(BASE_DIR, RANDOM_STATE_FILE);
 
         const state = {
-            randomizedBooks,
-            allAvailableBooks,
+            randomStateMap,
             timestamp: new Date().toISOString()
         };
 
@@ -112,9 +117,20 @@ app.on('quit', async () => {
 });
 
 // 添加重置随机状态的处理函数
-ipcMain.handle('reset-random-state', async () => {
+ipcMain.handle('reset-random-state', async (event, baseDir) => {
     try {
-        randomizedBooks = [];
+        if (baseDir) {
+            if (randomStateMap[baseDir]) {
+                randomStateMap[baseDir].randomizedBooks = [];
+            }
+        } else {
+            // 重置所有
+            for (const key in randomStateMap) {
+                if (randomStateMap[key]) {
+                    randomStateMap[key].randomizedBooks = [];
+                }
+            }
+        }
         console.log('已重置随机状态');
         await saveRandomState();
         return true;
@@ -255,6 +271,19 @@ ipcMain.handle('load-config', async () => {
 // 添加获取随机文件的 IPC 处理
 ipcMain.handle('get-random-file', async (event, baseDir) => {
     try {
+        // 确保 baseDir 是字符串
+        const dirKey = baseDir || 'default';
+        
+        // 初始化该目录的状态
+        if (!randomStateMap[dirKey]) {
+            randomStateMap[dirKey] = {
+                randomizedBooks: [],
+                allAvailableBooks: []
+            };
+        }
+        
+        const state = randomStateMap[dirKey];
+
         // 获取目录中的所有TXT文件
         const txtFiles = await getAllTxtFiles(baseDir);
         if (txtFiles.length === 0) {
@@ -263,28 +292,28 @@ ipcMain.handle('get-random-file', async (event, baseDir) => {
 
         // 检查是否所有书籍列表已更新
         const currentBookSet = JSON.stringify(txtFiles.sort());
-        const previousBookSet = JSON.stringify(allAvailableBooks.sort());
+        const previousBookSet = JSON.stringify(state.allAvailableBooks.sort());
 
         // 如果书籍列表发生变化或首次运行，重置已随机列表
         if (currentBookSet !== previousBookSet) {
             console.log('书籍列表已更新，重置随机状态');
-            allAvailableBooks = [...txtFiles];
-            randomizedBooks = [];
+            state.allAvailableBooks = [...txtFiles];
+            state.randomizedBooks = [];
         }
 
         // 如果所有书籍都已经随机过一遍，重置已随机列表
-        if (randomizedBooks.length >= txtFiles.length) {
+        if (state.randomizedBooks.length >= txtFiles.length) {
             console.log('所有书籍都已随机过一遍，重置随机状态');
-            randomizedBooks = [];
+            state.randomizedBooks = [];
         }
 
         // 过滤出未随机过的书籍
-        const availableBooks = txtFiles.filter(book => !randomizedBooks.includes(book));
+        const availableBooks = txtFiles.filter(book => !state.randomizedBooks.includes(book));
 
         // 如果没有可用书籍（理论上不应该发生），重置并使用所有书籍
         if (availableBooks.length === 0) {
             console.log('没有可用书籍，重置随机状态');
-            randomizedBooks = [];
+            state.randomizedBooks = [];
             availableBooks = [...txtFiles];
         }
 
@@ -293,8 +322,8 @@ ipcMain.handle('get-random-file', async (event, baseDir) => {
         const selectedBook = availableBooks[randomIndex];
 
         // 将选中的书籍添加到已随机列表
-        randomizedBooks.push(selectedBook);
-        console.log(`已随机过 ${randomizedBooks.length}/${txtFiles.length} 本书`);
+        state.randomizedBooks.push(selectedBook);
+        console.log(`已随机过 ${state.randomizedBooks.length}/${txtFiles.length} 本书`);
 
         // 保存随机状态
         await saveRandomState();
@@ -424,18 +453,20 @@ async function getDirectoryTree(dir, relativePath = '') {
 }
 
 // 添加获取文件列表的 IPC 处理
-ipcMain.handle('get-file-list', async () => {
+ipcMain.handle('get-file-list', async (event, libraryDir) => {
     try {
-        // 获取配置
-        const exePath = app.getPath('exe');
-        const configPath = path.join(path.dirname(exePath), 'config.json');
-        let libraryDir = '';
+        // 如果参数没有提供路径，则回退到读取配置
+        if (!libraryDir) {
+            // 获取配置
+            const exePath = app.getPath('exe');
+            const configPath = path.join(path.dirname(exePath), 'config.json');
 
-        if (fs.existsSync(configPath)) {
-            const configData = await fsPromises.readFile(configPath, 'utf8');
-            const config = JSON.parse(configData);
-            // 优先使用 libraryDir，如果没有则使用 baseDir
-            libraryDir = config.libraryDir || config.baseDir;
+            if (fs.existsSync(configPath)) {
+                const configData = await fsPromises.readFile(configPath, 'utf8');
+                const config = JSON.parse(configData);
+                // 优先使用 libraryDir，如果没有则使用 baseDir
+                libraryDir = config.libraryDir || config.baseDir;
+            }
         }
 
         // 如果没有配置路径，使用文档目录

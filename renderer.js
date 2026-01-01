@@ -243,6 +243,7 @@ window.isPreviewMode = false;
 // 多配置文件支持
 // 强制默认启动为普通模式
 let currentProfile = 'default';
+let globalConfig = {}; // 保存全局配置
 localStorage.setItem('currentProfile', 'default');
 
 function getStorageKey(key) {
@@ -250,10 +251,27 @@ function getStorageKey(key) {
     return `${key}_${currentProfile}`;
 }
 
+function applyProfileConfig() {
+    if (currentProfile === 'hidden') {
+        baseDir = globalConfig.hiddenBaseDir || '';
+        searchDirs = globalConfig.hiddenSearchDirs || [];
+    } else {
+        baseDir = globalConfig.baseDir || '';
+        searchDirs = globalConfig.searchDirs || [];
+    }
+
+    // 确保当前baseDir也在searchDirs中
+    if (baseDir && !searchDirs.includes(baseDir)) {
+        searchDirs.push(baseDir);
+    }
+}
+
 function toggleProfile() {
     const newProfile = currentProfile === 'default' ? 'hidden' : 'default';
     currentProfile = newProfile;
     localStorage.setItem('currentProfile', currentProfile);
+
+    applyProfileConfig(); // 应用新模式的配置
 
     showNotification(currentProfile === 'hidden' ? '已切换到隐私模式' : '已切换到普通模式');
 
@@ -834,32 +852,37 @@ function createChapterWorker() {
                             let nextNewLine = text.indexOf('\\n', currentIndex);
                             if (nextNewLine === -1) nextNewLine = textLength;
                             
-                            // 获取当前行内容 (不包含换行符)
-                            const line = text.slice(currentIndex, nextNewLine);
-                            const trimmedLine = line.trim();
+                            // 优化：先检查行长度，如果太长肯定不是章节标题，直接跳过
+                            const rawLineLength = nextNewLine - currentIndex;
                             
-                            let isChapter = false;
-                            // 章节名通常比较短，忽略过长的行
-                            if (trimmedLine.length > 0 && trimmedLine.length < 50) {
-                                for (const pattern of chapterPatterns) {
-                                    if (pattern.test(trimmedLine)) {
-                                        isChapter = true;
-                                        break;
+                            if (rawLineLength < 100) {
+                                // 获取当前行内容 (不包含换行符)
+                                const line = text.slice(currentIndex, nextNewLine);
+                                const trimmedLine = line.trim();
+                                
+                                let isChapter = false;
+                                // 章节名通常比较短，忽略过长的行
+                                if (trimmedLine.length > 0 && trimmedLine.length < 50) {
+                                    for (const pattern of chapterPatterns) {
+                                        if (pattern.test(trimmedLine)) {
+                                            isChapter = true;
+                                            break;
+                                        }
                                     }
                                 }
-                            }
-                            
-                            if (isChapter) {
-                                if (chapters.length > 0) {
-                                    // 设置上一章的内容
-                                    chapters[chapters.length - 1].content = text.slice(lastChapterStart, currentIndex);
+                                
+                                if (isChapter) {
+                                    if (chapters.length > 0) {
+                                        // 设置上一章的内容
+                                        chapters[chapters.length - 1].content = text.slice(lastChapterStart, currentIndex);
+                                    }
+                                    chapters.push({
+                                        title: trimmedLine,
+                                        position: currentIndex,
+                                        content: ''
+                                    });
+                                    lastChapterStart = currentIndex;
                                 }
-                                chapters.push({
-                                    title: trimmedLine,
-                                    position: currentIndex,
-                                    content: ''
-                                });
-                                lastChapterStart = currentIndex;
                             }
                             
                             // 移动到下一行
@@ -1166,6 +1189,34 @@ function toggleFontSettings() {
     const panel = document.getElementById('font-settings-panel');
     panel.classList.toggle('hidden');
 }
+
+// 手动缓存按钮事件
+document.getElementById('manual-cache-btn').addEventListener('click', async () => {
+    if (!window.currentFilePath || !chapters || chapters.length === 0) {
+        showNotification('当前没有打开的书籍或章节未加载');
+        return;
+    }
+
+    const btn = document.getElementById('manual-cache-btn');
+    const originalText = btn.textContent;
+    btn.textContent = '正在缓存...';
+    btn.disabled = true;
+
+    try {
+        const success = await ipcRenderer.invoke('save-book-cache', window.currentFilePath, { chapters: chapters });
+        if (success) {
+            showNotification('书籍缓存已成功保存');
+        } else {
+            showNotification('缓存保存失败');
+        }
+    } catch (error) {
+        console.error('手动缓存失败:', error);
+        showNotification('缓存失败: ' + error.message);
+    } finally {
+        btn.textContent = originalText;
+        btn.disabled = false;
+    }
+});
 
 function changeFontFamily() {
     const fontFamily = document.getElementById('font-family-selector').value;
@@ -1511,24 +1562,34 @@ function addToHistory(record) {
     const historyKey = getStorageKey('readingHistory');
     let history = JSON.parse(localStorage.getItem(historyKey)) || [];
 
+    // 检查是否已存在相同文件名的记录
+    const existingIndex = history.findIndex(item => item.fileName === record.fileName);
+    let lastTimestamp = 0;
+    
+    if (existingIndex !== -1) {
+        // 保留原来的record对象，只更新需要变动的字段
+        const oldRecord = history[existingIndex];
+        lastTimestamp = oldRecord.timestamp || 0;
+        record = { ...oldRecord, ...record };
+        // 删除旧记录
+        history.splice(existingIndex, 1);
+    }
+
     // 添加时间戳
-    record.timestamp = new Date().getTime();
+    // 解决多设备时间不同步问题：如果本地时间落后于记录时间（可能是另一台设备产生的），
+    // 则强制使用记录时间 + 1秒，确保当前进度被视为最新
+    const currentTimestamp = new Date().getTime();
+    if (currentTimestamp <= lastTimestamp) {
+        record.timestamp = lastTimestamp + 1000;
+    } else {
+        record.timestamp = currentTimestamp;
+    }
 
     // 添加章节和页面总数信息，用于计算进度
     if (chapters.length > 0) {
         record.totalChapters = chapters.length;
     } else if (currentContent) {
         record.totalPages = Math.ceil(currentContent.length / wordsPerPage);
-    }
-
-    // 检查是否已存在相同文件名的记录
-    const existingIndex = history.findIndex(item => item.fileName === record.fileName);
-    if (existingIndex !== -1) {
-        // 保留原来的record对象，只更新需要变动的字段
-        const oldRecord = history[existingIndex];
-        record = { ...oldRecord, ...record };
-        // 删除旧记录
-        history.splice(existingIndex, 1);
     }
 
     // 添加新记录到最前面
@@ -1812,10 +1873,15 @@ function manageSearchPaths() {
                 baseDir = searchDirs[index];
 
                 // 保存配置
-                await ipcRenderer.invoke('save-config', {
-                    baseDir: baseDir,
-                    searchDirs: searchDirs
-                });
+                const updates = {};
+                if (currentProfile === 'hidden') {
+                    updates.hiddenBaseDir = baseDir;
+                    globalConfig.hiddenBaseDir = baseDir;
+                } else {
+                    updates.baseDir = baseDir;
+                    globalConfig.baseDir = baseDir;
+                }
+                await ipcRenderer.invoke('save-config', updates);
 
                 showNotification(`已将随机阅读路径设置为: ${baseDir}`);
 
@@ -1854,9 +1920,15 @@ function manageSearchPaths() {
             if (JSON.stringify(searchDirs) !== JSON.stringify(newSearchDirs)) {
                 searchDirs = newSearchDirs;
                 // 保存配置
-                ipcRenderer.invoke('save-config', {
-                    searchDirs: searchDirs
-                }).then(() => {
+                const updates = {};
+                if (currentProfile === 'hidden') {
+                    updates.hiddenSearchDirs = searchDirs;
+                    globalConfig.hiddenSearchDirs = searchDirs;
+                } else {
+                    updates.searchDirs = searchDirs;
+                    globalConfig.searchDirs = searchDirs;
+                }
+                ipcRenderer.invoke('save-config', updates).then(() => {
                     // 重新渲染列表以更新索引
                     document.body.removeChild(modal);
                     manageSearchPaths();
@@ -1913,9 +1985,15 @@ function manageSearchPaths() {
                 } searchDirs.splice(index, 1);
 
                 // 保存配置
-                await ipcRenderer.invoke('save-config', {
-                    searchDirs: searchDirs
-                });
+                const updates = {};
+                if (currentProfile === 'hidden') {
+                    updates.hiddenSearchDirs = searchDirs;
+                    globalConfig.hiddenSearchDirs = searchDirs;
+                } else {
+                    updates.searchDirs = searchDirs;
+                    globalConfig.searchDirs = searchDirs;
+                }
+                await ipcRenderer.invoke('save-config', updates);
 
                 // 刷新列表
                 manageSearchPaths();
@@ -1954,10 +2032,19 @@ async function selectCustomPath() {
             }
 
             // 保存配置
-            await ipcRenderer.invoke('save-config', {
-                baseDir: baseDir,
-                searchDirs: searchDirs
-            });
+            const updates = {};
+            if (currentProfile === 'hidden') {
+                updates.hiddenBaseDir = baseDir;
+                updates.hiddenSearchDirs = searchDirs;
+                globalConfig.hiddenBaseDir = baseDir;
+                globalConfig.hiddenSearchDirs = searchDirs;
+            } else {
+                updates.baseDir = baseDir;
+                updates.searchDirs = searchDirs;
+                globalConfig.baseDir = baseDir;
+                globalConfig.searchDirs = searchDirs;
+            }
+            await ipcRenderer.invoke('save-config', updates);
 
             showNotification(`已将随机阅读路径设置为: ${baseDir}`);
             return newPath;
@@ -2649,9 +2736,15 @@ async function setLibraryPath() {
 
         if (newPath) {
             // 保存配置
-            await ipcRenderer.invoke('save-config', {
-                libraryDir: newPath
-            });
+            const updates = {};
+            if (currentProfile === 'hidden') {
+                updates.hiddenLibraryDir = newPath;
+                globalConfig.hiddenLibraryDir = newPath;
+            } else {
+                updates.libraryDir = newPath;
+                globalConfig.libraryDir = newPath;
+            }
+            await ipcRenderer.invoke('save-config', updates);
             showNotification(`已设置书库路径: ${newPath}`);
         }
     } catch (error) {
@@ -2669,7 +2762,11 @@ function showRemotePathSelector() {
         let currentPath = '';
         try {
             const config = await ipcRenderer.invoke('load-config');
-            currentPath = config.libraryDir || config.baseDir || '';
+            if (currentProfile === 'hidden') {
+                currentPath = config.hiddenLibraryDir || config.hiddenBaseDir || '';
+            } else {
+                currentPath = config.libraryDir || config.baseDir || '';
+            }
         } catch (e) { }
 
         const modal = document.createElement('div');
@@ -2861,14 +2958,10 @@ function showRemotePathSelector() {
 async function loadConfig() {
     try {
         const config = await ipcRenderer.invoke('load-config');
-        // 使用配置值
-        baseDir = config.baseDir || '';
-        searchDirs = config.searchDirs || [];
-
-        // 确保当前baseDir也在searchDirs中
-        if (!searchDirs.includes(baseDir)) {
-            searchDirs.push(baseDir);
-        }
+        globalConfig = config; // 保存到全局配置
+        
+        // 应用当前模式的配置
+        applyProfileConfig();
 
         wordsPerPage = config.wordsPerPage || 4000;
         fontSize = config.fontSize || 18;
@@ -3093,7 +3186,13 @@ async function showServerLibrary() {
         document.getElementById('loading-overlay').style.display = 'flex';
         document.querySelector('.loading-message').textContent = '正在获取书库...';
 
-        const files = await ipcRenderer.invoke('get-file-list');
+        let currentLibraryDir = '';
+        if (currentProfile === 'hidden') {
+            currentLibraryDir = globalConfig.hiddenLibraryDir || globalConfig.hiddenBaseDir || '';
+        } else {
+            currentLibraryDir = globalConfig.libraryDir || globalConfig.baseDir || '';
+        }
+        const files = await ipcRenderer.invoke('get-file-list', currentLibraryDir);
 
         document.getElementById('loading-overlay').style.display = 'none';
 
