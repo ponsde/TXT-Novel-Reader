@@ -68,3 +68,5 @@ random_state.json
 book_cache/
 books/*.txt
 !books/.gitkeep
+
+deleted_history_hidden.json

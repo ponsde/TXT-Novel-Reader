@@ -24,7 +24,7 @@ async function loadRandomState() {
         if (fs.existsSync(stateFilePath)) {
             const stateData = await fsPromises.readFile(stateFilePath, 'utf8');
             const state = JSON.parse(stateData);
-            
+
             // 兼容旧格式
             if (Array.isArray(state.randomizedBooks)) {
                 randomStateMap = {};
@@ -476,7 +476,7 @@ const apiHandlers = {
 
         // 确保 baseDir 是字符串
         const dirKey = baseDir || 'default';
-        
+
         // 初始化该目录的状态
         if (!randomStateMap[dirKey]) {
             randomStateMap[dirKey] = {
@@ -484,7 +484,7 @@ const apiHandlers = {
                 allAvailableBooks: []
             };
         }
-        
+
         const state = randomStateMap[dirKey];
         // 确保属性存在
         if (!state.randomizedBooks) state.randomizedBooks = [];
@@ -520,7 +520,7 @@ const apiHandlers = {
 
     'reset-random-state': async (args) => {
         const baseDir = args && args[0];
-        
+
         if (baseDir) {
             // 如果指定了目录，只重置该目录
             if (randomStateMap[baseDir]) {
@@ -534,7 +534,7 @@ const apiHandlers = {
                 }
             }
         }
-        
+
         await saveRandomState();
         return true;
     },
@@ -585,11 +585,11 @@ const server = http.createServer(async (req, res) => {
                     // 简单的安全检查
                     try {
                         const stat = await fsPromises.stat(filePath);
-                        
+
                         // 启用压缩支持
                         const acceptEncoding = req.headers['accept-encoding'] || '';
                         const rawStream = fs.createReadStream(filePath);
-                        
+
                         // 设置基本头部
                         const headers = {
                             'Content-Type': 'application/octet-stream',
@@ -623,14 +623,14 @@ const server = http.createServer(async (req, res) => {
                                 res.end(JSON.stringify({ error: 'File read error' }));
                             }
                         });
-                        
+
                         // 监听原始流的错误，防止未捕获异常
                         rawStream.on('error', (error) => {
                             console.error('Raw stream error:', error);
                             // 如果响应头还没发送，可以尝试发送错误
                             // 但通常 outputStream 的 error 也会触发
                         });
-                        
+
                     } catch (error) {
                         console.error('File access error:', error);
                         if (!res.headersSent) {
@@ -738,7 +738,7 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, 'localhost', () => {
     console.log(`\n=== 优雅阅读器 Web 服务已启动 ===`);
     console.log(`端口: ${PORT}`);
     console.log(`Server running at http://localhost:${PORT}/`);

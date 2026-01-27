@@ -9,8 +9,9 @@
     "homePageFontSize": 16,
     "theme": "light",
     "hiddenLibraryDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧",
-    "hiddenBaseDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧",
+    "hiddenBaseDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧/333",
     "hiddenSearchDirs": [
-        "/home/ubuntu/TXT-Novel-Reader/xs/旧"
+        "/home/ubuntu/TXT-Novel-Reader/xs/旧",
+        "/home/ubuntu/TXT-Novel-Reader/xs/旧/333"
     ]
 }
