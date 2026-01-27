@@ -743,3 +743,12 @@ server.listen(PORT, 'localhost', () => {
     console.log(`端口: ${PORT}`);
     console.log(`Server running at http://localhost:${PORT}/`);
 });
+
+// 恢复默认超时设置
+try {
+    server.timeout = 0; // 保持为 0 仅在必要时可以修改
+    server.keepAliveTimeout = 0;
+} catch (e) {
+    // 如果运行环境不允许修改，不影响主流程
+    console.warn('无法修改 server 超时设置:', e.message || e);
+}

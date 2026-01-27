@@ -91,6 +91,85 @@ try {
 } catch (error) {
     console.log('Electron 加载失败，切换到 Web 模式');
     isWebMode = true;
+
+    // Web 端读取文件的两种方式：优先流式，其次分片兜底，避免网关返回 502
+    const fetchFileStream = async (filePath) => {
+        const response = await fetch('/api/raw-read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filePath }),
+            cache: 'no-store'
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        return new Uint8Array(arrayBuffer);
+    };
+
+    const fetchFileInChunks = async (filePath) => {
+        const sizeResp = await fetch('/api/invoke', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ channel: 'get-file-size', args: [filePath] }),
+            cache: 'no-store'
+        });
+
+        if (!sizeResp.ok) {
+            throw new Error(`Failed to get file size, status: ${sizeResp.status}`);
+        }
+
+        const sizeResult = await sizeResp.json();
+        const totalSize = Number(sizeResult.data || 0);
+        if (!Number.isFinite(totalSize) || totalSize <= 0) {
+            throw new Error('Invalid file size');
+        }
+
+        // 发送小块请求，减小网关压力
+        const chunkSize = 1024 * 256; // 256KB per request to stay proxy-friendly
+        const chunks = [];
+        let offset = 0;
+
+        while (offset < totalSize) {
+            const length = Math.min(chunkSize, totalSize - offset);
+            const chunkResp = await fetch('/api/invoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ channel: 'read-file-chunk', args: [filePath, offset, length] }),
+                cache: 'no-store'
+            });
+
+            if (!chunkResp.ok) {
+                throw new Error(`Chunk request failed, status: ${chunkResp.status}`);
+            }
+
+            const chunkJson = await chunkResp.json();
+            const chunkData = chunkJson.data;
+
+            let uint8;
+            if (chunkData && chunkData.type === 'Buffer' && Array.isArray(chunkData.data)) {
+                uint8 = Uint8Array.from(chunkData.data);
+            } else if (Array.isArray(chunkData)) {
+                uint8 = Uint8Array.from(chunkData);
+            } else {
+                throw new Error('Invalid chunk data');
+            }
+
+            chunks.push(uint8);
+            offset += uint8.length;
+        }
+
+        const merged = new Uint8Array(totalSize);
+        let writeOffset = 0;
+        for (const chunk of chunks) {
+            merged.set(chunk, writeOffset);
+            writeOffset += chunk.length;
+        }
+        return merged;
+    };
+
     // Web 模式下的 ipcRenderer 模拟
     ipcRenderer = {
         invoke: async (channel, ...args) => {
@@ -98,19 +177,32 @@ try {
             try {
                 // 针对 read-file 使用优化的流式接口
                 if (channel === 'read-file') {
-                    const response = await fetch('/api/raw-read', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ filePath: args[0] }),
-                        cache: 'no-store'
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                    try {
+                        return await fetchFileStream(args[0]);
+                    } catch (streamError) {
+                        console.warn('流式读取失败，尝试分片兜底:', streamError?.message || streamError);
+                        try {
+                            return await fetchFileInChunks(args[0]);
+                        } catch (chunkError) {
+                            console.warn('分片兜底失败，尝试直接普通接口:', chunkError?.message || chunkError);
+                            // 最终兜底：使用原 /api/invoke 的 read-file（返回 Buffer JSON）
+                            const resp = await fetch('/api/invoke', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ channel: 'read-file', args }),
+                                cache: 'no-store'
+                            });
+                            if (!resp.ok) {
+                                throw new Error(`Fallback read-file failed, status: ${resp.status}`);
+                            }
+                            const result = await resp.json();
+                            const data = result.data;
+                            if (data && data.type === 'Buffer' && Array.isArray(data.data)) {
+                                return Uint8Array.from(data.data);
+                            }
+                            throw new Error('Fallback read-file returned invalid data');
+                        }
                     }
-
-                    const arrayBuffer = await response.arrayBuffer();
-                    return new Uint8Array(arrayBuffer);
                 }
 
                 // Web 模式下的缓存检查
@@ -1565,7 +1657,7 @@ function addToHistory(record) {
     // 检查是否已存在相同文件名的记录
     const existingIndex = history.findIndex(item => item.fileName === record.fileName);
     let lastTimestamp = 0;
-    
+
     if (existingIndex !== -1) {
         // 保留原来的record对象，只更新需要变动的字段
         const oldRecord = history[existingIndex];
@@ -2959,7 +3051,7 @@ async function loadConfig() {
     try {
         const config = await ipcRenderer.invoke('load-config');
         globalConfig = config; // 保存到全局配置
-        
+
         // 应用当前模式的配置
         applyProfileConfig();
 
