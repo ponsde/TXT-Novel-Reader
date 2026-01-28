@@ -271,28 +271,63 @@ ipcMain.handle('load-config', async () => {
 // 添加获取随机文件的 IPC 处理
 ipcMain.handle('get-random-file', async (event, baseDir) => {
     try {
-        // 确保 baseDir 是字符串
-        const dirKey = baseDir || 'default';
-        
-        // 初始化该目录的状态
+        // 1) 兜底获取有效目录（Linux/不同运行方式下路径可能不存在）
+        let targetDir = baseDir;
+
+        // 如果传入目录无效，尝试从配置文件恢复
+        if (!targetDir || !fs.existsSync(targetDir)) {
+            try {
+                const exePath = app.getPath('exe');
+                const configPath = path.join(path.dirname(exePath), 'config.json');
+                if (fs.existsSync(configPath)) {
+                    const config = JSON.parse(await fsPromises.readFile(configPath, 'utf8'));
+                    if (config.baseDir && fs.existsSync(config.baseDir)) {
+                        targetDir = config.baseDir;
+                    }
+                }
+            } catch (e) {
+                console.warn('尝试从配置恢复随机路径失败:', e?.message || e);
+            }
+        }
+
+        // 再次兜底到程序目录下的 books 文件夹
+        if (!targetDir || !fs.existsSync(targetDir)) {
+            const fallbackDir = path.join(BASE_DIR, 'books');
+            if (fs.existsSync(fallbackDir)) {
+                targetDir = fallbackDir;
+            }
+        }
+
+        // 若依旧无效，直接返回
+        if (!targetDir || !fs.existsSync(targetDir)) {
+            console.warn('随机阅读路径无效，未找到可用目录');
+            return null;
+        }
+
+        // 2) 基于最终目录建立状态
+        const dirKey = targetDir || 'default';
+
         if (!randomStateMap[dirKey]) {
             randomStateMap[dirKey] = {
                 randomizedBooks: [],
                 allAvailableBooks: []
             };
         }
-        
+
         const state = randomStateMap[dirKey];
+        // 兼容旧数据，确保字段存在
+        if (!Array.isArray(state.randomizedBooks)) state.randomizedBooks = [];
+        if (!Array.isArray(state.allAvailableBooks)) state.allAvailableBooks = [];
 
         // 获取目录中的所有TXT文件
-        const txtFiles = await getAllTxtFiles(baseDir);
+        const txtFiles = await getAllTxtFiles(targetDir);
         if (txtFiles.length === 0) {
             return null;
         }
 
         // 检查是否所有书籍列表已更新
-        const currentBookSet = JSON.stringify(txtFiles.sort());
-        const previousBookSet = JSON.stringify(state.allAvailableBooks.sort());
+        const currentBookSet = JSON.stringify([...txtFiles].sort());
+        const previousBookSet = JSON.stringify([...state.allAvailableBooks].sort());
 
         // 如果书籍列表发生变化或首次运行，重置已随机列表
         if (currentBookSet !== previousBookSet) {
@@ -308,7 +343,7 @@ ipcMain.handle('get-random-file', async (event, baseDir) => {
         }
 
         // 过滤出未随机过的书籍
-        const availableBooks = txtFiles.filter(book => !state.randomizedBooks.includes(book));
+        let availableBooks = txtFiles.filter(book => !state.randomizedBooks.includes(book));
 
         // 如果没有可用书籍（理论上不应该发生），重置并使用所有书籍
         if (availableBooks.length === 0) {

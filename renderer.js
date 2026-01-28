@@ -83,6 +83,26 @@ const webBookCache = new SimpleDB('BookCacheDB', 'chapters');
 let ipcRenderer;
 let pathModule;
 let isWebMode = false;
+
+// 简单的重试工具，降低偶发 502/504 造成的读取失败
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+async function fetchWithRetry(url, options, maxRetry = 2, backoff = 400) {
+    let lastErr;
+    for (let attempt = 0; attempt <= maxRetry; attempt++) {
+        try {
+            const resp = await fetch(url, options);
+            if (!resp.ok && [502, 503, 504, 520, 521, 522, 523, 524].includes(resp.status)) {
+                throw new Error(`HTTP ${resp.status}`);
+            }
+            return resp;
+        } catch (err) {
+            lastErr = err;
+            if (attempt === maxRetry) break;
+            await sleep(backoff * Math.pow(1.6, attempt)); // 线性+指数回退
+        }
+    }
+    throw lastErr;
+}
 try {
     const electron = require('electron');
     ipcRenderer = electron.ipcRenderer;
@@ -94,12 +114,12 @@ try {
 
     // Web 端读取文件的两种方式：优先流式，其次分片兜底，避免网关返回 502
     const fetchFileStream = async (filePath) => {
-        const response = await fetch('/api/raw-read', {
+        const response = await fetchWithRetry('/api/raw-read', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filePath }),
             cache: 'no-store'
-        });
+        }, 2);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
@@ -110,12 +130,12 @@ try {
     };
 
     const fetchFileInChunks = async (filePath) => {
-        const sizeResp = await fetch('/api/invoke', {
+        const sizeResp = await fetchWithRetry('/api/invoke', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ channel: 'get-file-size', args: [filePath] }),
             cache: 'no-store'
-        });
+        }, 2);
 
         if (!sizeResp.ok) {
             throw new Error(`Failed to get file size, status: ${sizeResp.status}`);
@@ -128,18 +148,18 @@ try {
         }
 
         // 发送小块请求，减小网关压力
-        const chunkSize = 1024 * 256; // 256KB per request to stay proxy-friendly
+        const chunkSize = 1024 * 128; // 缩小单次分片，减少网关压力
         const chunks = [];
         let offset = 0;
 
         while (offset < totalSize) {
             const length = Math.min(chunkSize, totalSize - offset);
-            const chunkResp = await fetch('/api/invoke', {
+            const chunkResp = await fetchWithRetry('/api/invoke', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ channel: 'read-file-chunk', args: [filePath, offset, length] }),
                 cache: 'no-store'
-            });
+            }, 2);
 
             if (!chunkResp.ok) {
                 throw new Error(`Chunk request failed, status: ${chunkResp.status}`);
@@ -186,12 +206,12 @@ try {
                         } catch (chunkError) {
                             console.warn('分片兜底失败，尝试直接普通接口:', chunkError?.message || chunkError);
                             // 最终兜底：使用原 /api/invoke 的 read-file（返回 Buffer JSON）
-                            const resp = await fetch('/api/invoke', {
+                            const resp = await fetchWithRetry('/api/invoke', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ channel: 'read-file', args }),
                                 cache: 'no-store'
-                            });
+                            }, 2);
                             if (!resp.ok) {
                                 throw new Error(`Fallback read-file failed, status: ${resp.status}`);
                             }
