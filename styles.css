@@ -841,6 +841,18 @@ body.dark-mode .setting-group span {
         font-size: 14px;
         min-width: auto;
     }
+
+    /* Mobile-only controls */
+    .mobile-only {
+        display: flex !important;
+    }
+}
+
+/* Desktop hides mobile-only */
+@media (min-width: 769px) {
+    .mobile-only {
+        display: none !important;
+    }
 }
     /* 移动端历史记录样式优化 */
 .history-list {

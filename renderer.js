@@ -352,11 +352,18 @@ let wordsPerPage = 4000;
 // 全局预览模式标志
 window.isPreviewMode = false;
 
+// 设备区分（移动/桌面）用于独立保存字体设置
+function isMobileView() {
+    return window.innerWidth <= 768 || /Mobile|Android|iP(ad|hone)/i.test(navigator.userAgent);
+}
+function getSettingsKey() {
+    return isMobileView() ? 'readerSettings_mobile' : 'readerSettings_desktop';
+}
+
 // 多配置文件支持
 // 强制默认启动为普通模式
-let currentProfile = 'default';
+let currentProfile = localStorage.getItem('currentProfile') || 'default';
 let globalConfig = {}; // 保存全局配置
-localStorage.setItem('currentProfile', 'default');
 
 function getStorageKey(key) {
     if (currentProfile === 'default') return key;
@@ -1379,7 +1386,7 @@ function changeParagraphSpacing() {
 }
 
 function applyStoredSettings() {
-    const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+    const settings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
 
     if (settings.fontFamily) {
         document.getElementById('font-family-selector').value = settings.fontFamily;
@@ -1403,21 +1410,16 @@ function applyStoredSettings() {
         document.getElementById('paragraph-spacing-value').textContent = `${settings.paragraphSpacing}em`;
     }
 
-    // 分别应用阅读内容和主页字体大小
+    // 分别应用阅读内容和主页字体大小（无论当前是否在阅读，都更新全局变量）
     if (settings.fontSize) {
         fontSize = parseInt(settings.fontSize);
-        // 只有在阅读模式下才应用字体大小
-        if (currentFileName) {
-            document.getElementById('content').style.fontSize = `${fontSize}px`;
-        }
+        const contentEl = document.getElementById('content');
+        if (contentEl) contentEl.style.fontSize = `${fontSize}px`;
     }
 
     if (settings.homePageFontSize) {
         homePageFontSize = parseInt(settings.homePageFontSize);
-        // 只有在主页模式下才应用主页字体大小
-        if (!currentFileName) {
-            applyHomePageFontSize();
-        }
+        if (!currentFileName) applyHomePageFontSize();
     }
 }
 
@@ -1446,9 +1448,9 @@ function changeFontSize(delta) {
         document.getElementById('content').style.fontSize = `${fontSize}px`;
 
         // 保存到localStorage
-        const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
         settings.fontSize = fontSize;
-        localStorage.setItem('readerSettings', JSON.stringify(settings));
+        localStorage.setItem(getSettingsKey(), JSON.stringify(settings));
     } else {
         // 主页模式下，调整主页字体大小
         homePageFontSize += delta * 2;
@@ -1458,9 +1460,9 @@ function changeFontSize(delta) {
         applyHomePageFontSize();
 
         // 保存到localStorage
-        const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
         settings.homePageFontSize = homePageFontSize;
-        localStorage.setItem('readerSettings', JSON.stringify(settings));
+        localStorage.setItem(getSettingsKey(), JSON.stringify(settings));
     }
 }
 
@@ -1471,18 +1473,18 @@ function setFontSize(size) {
         document.getElementById('content').style.fontSize = `${fontSize}px`;
 
         // 保存到localStorage
-        const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
         settings.fontSize = fontSize;
-        localStorage.setItem('readerSettings', JSON.stringify(settings));
+        localStorage.setItem(getSettingsKey(), JSON.stringify(settings));
     } else {
         // 主页模式下设置字体大小
         homePageFontSize = size;
         applyHomePageFontSize();
 
         // 保存到localStorage
-        const settings = JSON.parse(localStorage.getItem('readerSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
         settings.homePageFontSize = homePageFontSize;
-        localStorage.setItem('readerSettings', JSON.stringify(settings));
+        localStorage.setItem(getSettingsKey(), JSON.stringify(settings));
     }
 }
 
@@ -2482,16 +2484,23 @@ function showNotification(message) {
 
 // 添加清空历史记录的函数
 function clearHistory() {
-    if (confirm('确定要清空所有阅读历史吗？')) {
-        localStorage.removeItem('readingHistory');
+    if (!confirm('确定要清空所有阅读历史吗？')) return;
 
-        // 清空所有书籍的阅读进度
-        localStorage.removeItem('allBookProgress');
+    // 本地存储按当前模式的 key
+    const historyKey = getStorageKey('readingHistory');
+    const progressKey = getStorageKey('allBookProgress');
+    localStorage.removeItem(historyKey);
+    localStorage.removeItem(progressKey);
 
-        // 更新界面
-        updateHistoryDisplay();
-        showNotification('已清空所有阅读历史');
-    }
+    // 同步清空到服务器端文件
+    ipcRenderer.invoke('save-history', [], currentProfile)
+        .catch(err => console.error('清空历史时保存服务器文件失败:', err));
+    ipcRenderer.invoke('save-deleted-history', [], currentProfile)
+        .catch(err => console.error('清空删除记录失败:', err));
+
+    // 更新界面
+    updateHistoryDisplay();
+    showNotification('已清空所有阅读历史');
 }
 
 // 初始化函数
@@ -2610,13 +2619,9 @@ function initApp() {
     // 绑定事件监听
     const randomButton = document.getElementById('random-book-btn');
     if (randomButton) {
-        // 提取显示菜单的逻辑
         const showRandomMenu = (x, y) => {
-            // 移除已存在的菜单
             const existingMenu = document.getElementById('random-context-menu');
             if (existingMenu) existingMenu.remove();
-
-            // 创建右键菜单
             const menu = document.createElement('div');
             menu.className = 'context-menu';
             menu.id = 'random-context-menu';
@@ -2628,68 +2633,22 @@ function initApp() {
                     选择随机目录
                 </div>
             `;
-
             menu.style.left = x + 'px';
             menu.style.top = y + 'px';
-
-            // 添加到页面
             document.body.appendChild(menu);
-
-            // 点击其他地方关闭菜单
-            function closeMenu() {
-                if (menu && menu.parentNode) {
-                    menu.parentNode.removeChild(menu);
-                }
+            const closeMenu = () => {
+                menu.remove();
                 document.removeEventListener('click', closeMenu);
-            }
-            // 延迟绑定关闭事件，防止立即触发
+            };
             setTimeout(() => document.addEventListener('click', closeMenu), 0);
         };
 
-        // 使用 onclick 属性以确保覆盖旧的事件处理，避免重复绑定
         randomButton.onclick = function (e) {
-            console.log('Random button clicked');
-            // 检查是否按住了Ctrl键
-            const useCustomPath = e.ctrlKey;
-            loadRandomBook(useCustomPath);
-        };
-
-        // 添加长按事件支持（针对移动端）
-        let pressTimer;
-        let isLongPress = false;
-
-        randomButton.addEventListener('touchstart', (e) => {
-            isLongPress = false;
-            pressTimer = setTimeout(() => {
-                isLongPress = true;
-                // 触发菜单逻辑
-                const touch = e.touches[0];
-                showRandomMenu(touch.pageX, touch.pageY);
-            }, 800); // 800ms 长按
-        }, { passive: true });
-
-        randomButton.addEventListener('touchend', (e) => {
-            clearTimeout(pressTimer);
-            if (isLongPress) {
-                // 如果是长按，阻止默认点击行为（虽然 passive 不能阻止，但我们可以通过标志位控制）
-                // 注意：touchend 无法阻止 click 事件，因为 touchstart 是 passive 的
-                // 我们需要在 click 事件中检查 isLongPress
-                e.preventDefault(); // 尝试阻止（如果不是 passive）
-            }
-        }, { passive: false }); // 改为 false 以便调用 preventDefault
-
-        randomButton.addEventListener('touchmove', () => {
-            clearTimeout(pressTimer);
-        }, { passive: true });
-
-        // 拦截点击事件，如果是长按触发的，则不执行点击逻辑
-        const originalClick = randomButton.onclick;
-        randomButton.onclick = function (e) {
-            if (isLongPress) {
-                isLongPress = false;
+            if (e.ctrlKey) {
+                selectCustomPath();
                 return;
             }
-            if (originalClick) originalClick.call(this, e);
+            loadRandomBook(false);
         };
 
         // 右键菜单 (PC端)
@@ -2722,6 +2681,26 @@ function initApp() {
     }
     if (mobileLibraryButton) {
         mobileLibraryButton.onclick = handleLibraryClick;
+    }
+
+    const chooseLibraryPathBtn = document.getElementById('choose-library-path-btn');
+    if (chooseLibraryPathBtn) {
+        chooseLibraryPathBtn.onclick = () => setLibraryPath();
+    }
+
+    const chooseRandomPathBtn = document.getElementById('choose-random-path-btn');
+    if (chooseRandomPathBtn) {
+        chooseRandomPathBtn.onclick = () => selectCustomPath();
+    }
+
+    const mobilePrevBtn = document.querySelector('.mobile-page-prev');
+    if (mobilePrevBtn) {
+        mobilePrevBtn.onclick = () => previousPage();
+    }
+
+    const mobileNextBtn = document.querySelector('.mobile-page-next');
+    if (mobileNextBtn) {
+        mobileNextBtn.onclick = () => nextPage();
     }
 
     // 应用存储的字体设置
@@ -2884,7 +2863,7 @@ function showRemotePathSelector() {
         const modal = document.createElement('div');
         modal.className = 'modal';
 
-        // 渲染列表函数
+        // 渲染列表函数（懒加载当前目录，支持文件）
         async function renderList(path) {
             const listContainer = modal.querySelector('.file-list');
             const pathDisplay = modal.querySelector('.current-path');
@@ -2892,11 +2871,16 @@ function showRemotePathSelector() {
             listContainer.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div>';
 
             try {
-                const result = await ipcRenderer.invoke('list-directory', path);
+                const result = await ipcRenderer.invoke('list-directory', path, true);
 
                 if (result.error) {
+                    const parent = (path && path !== '/' && path.includes(result.separator || '/'))
+                        ? path.split(result.separator || '/').slice(0, -1).join(result.separator || '/') || '/'
+                        : '/';
+                    if (parent !== path) return renderList(parent);
+                    if (path !== '/') return renderList('/');
                     showNotification('无法访问目录: ' + result.error);
-                    // 如果出错，尝试回退到根目录或上级
+                    listContainer.innerHTML = '<div style="padding:12px;color:#999;">无法访问目录</div>';
                     return;
                 }
 
@@ -2905,16 +2889,27 @@ function showRemotePathSelector() {
                 pathDisplay.title = currentPath;
 
                 listContainer.innerHTML = result.items.map(item => `
-                            <div class="file-item ${item.isParent ? 'parent-dir' : ''}" data-path="${item.path.replace(/"/g, '&quot;')}">
-                                <span class="file-icon">${item.isParent ? '⬆️' : '📁'}</span>
+                            <div class="file-item ${item.type === 'directory' ? 'dir' : ''} ${item.isParent ? 'parent-dir' : ''}" data-path="${item.path.replace(/"/g, '&quot;')}" data-type="${item.type}">
+                                <span class="file-icon">${item.isParent ? '⬆️' : (item.type === 'directory' ? '📁' : '📄')}</span>
                                 <span class="file-name">${item.name}</span>
+                                ${item.type === 'file' ? `<span class="file-meta">${(item.size/1024/1024).toFixed(2)} MB</span>` : ''}
                             </div>
                         `).join('');
 
                 // 绑定点击事件
                 listContainer.querySelectorAll('.file-item').forEach(item => {
+                    const itemPath = item.dataset.path;
+                    const itemType = item.dataset.type;
                     item.addEventListener('click', () => {
-                        renderList(item.dataset.path);
+                        if (itemType === 'directory' || item.classList.contains('parent-dir')) {
+                            renderList(itemPath);
+                        } else {
+                            // 直接选择该文件所在目录（兼容无 path 模块场景）
+                            const sep = (itemPath && itemPath.includes('\\') && !itemPath.includes('/')) ? '\\\\' : '/';
+                            const dir = itemPath ? itemPath.split(/[/\\\\]/).slice(0, -1).join(sep) || sep : currentPath;
+                            currentPath = dir;
+                            pathDisplay.textContent = currentPath;
+                        }
                     });
                 });
 
@@ -3072,26 +3067,32 @@ async function loadConfig() {
         const config = await ipcRenderer.invoke('load-config');
         globalConfig = config; // 保存到全局配置
 
-        // 应用当前模式的配置
-        applyProfileConfig();
+        // 设备/模式优先：先取本设备存储的设置，再回落到配置
+        const deviceSettings = JSON.parse(localStorage.getItem(getSettingsKey()) || '{}');
 
         wordsPerPage = config.wordsPerPage || 4000;
-        fontSize = config.fontSize || 18;
-        homePageFontSize = config.homePageFontSize || 16;
+        fontSize = deviceSettings.fontSize || config.fontSize || 18;
+        homePageFontSize = deviceSettings.homePageFontSize || config.homePageFontSize || 16;
+
+        // 应用当前模式的配置
+        applyProfileConfig();
 
         // 应用主题设置
         if (config.theme === 'dark') {
             document.body.classList.add('dark-mode');
         }
 
-        // 根据当前模式应用字体大小
-        if (currentFileName) {
-            // 阅读模式
-            document.getElementById('content').style.fontSize = fontSize + 'px';
-        } else {
-            // 主页模式
-            applyHomePageFontSize();
-        }
+        // 根据当前模式应用字体大小（优先设备存储）
+        document.getElementById('content').style.fontSize = fontSize + 'px';
+        if (!currentFileName) applyHomePageFontSize();
+
+        // 确保设备设置回写（防止 config 覆盖后丢失）
+        const mergedSettings = {
+            ...deviceSettings,
+            fontSize,
+            homePageFontSize
+        };
+        localStorage.setItem(getSettingsKey(), JSON.stringify(mergedSettings));
 
         // 如果配置中禁用了某些功能，可以隐藏对应按钮
         if (config.hideRandomButton) {
@@ -3304,6 +3305,7 @@ async function showServerLibrary() {
         } else {
             currentLibraryDir = globalConfig.libraryDir || globalConfig.baseDir || '';
         }
+
         const files = await ipcRenderer.invoke('get-file-list', currentLibraryDir);
 
         document.getElementById('loading-overlay').style.display = 'none';
@@ -3315,10 +3317,6 @@ async function showServerLibrary() {
 
         // 禁止背景滚动
         document.body.style.overflow = 'hidden';
-
-        // 创建模态框显示列表
-        const modal = document.createElement('div');
-        modal.className = 'modal';
 
         // 递归生成文件树 HTML
         function generateTreeHtml(items, level = 0) {
@@ -3357,13 +3355,22 @@ async function showServerLibrary() {
             }).join('');
         }
 
+        const modal = document.createElement('div');
+        modal.className = 'modal';
         modal.innerHTML = `
                     <div class="modal-content library-modal">
                         <div class="modal-header">
                             <h3>云端书库</h3>
+                            <div class="library-search-bar">
+                                <input id="library-search-input" type="text" placeholder="输入书名关键字" />
+                                <button id="library-search-btn">搜索</button>
+                            </div>
                             <span class="modal-close">&times;</span>
                         </div>
                         <div class="modal-body custom-scrollbar">
+                            <div class="library-search-results" id="library-search-results">
+                                <div class="library-search-placeholder">输入关键字快速查找小说</div>
+                            </div>
                             <div class="file-tree">
                                 ${generateTreeHtml(files)}
                             </div>
@@ -3408,6 +3415,29 @@ async function showServerLibrary() {
                         flex: 1;
                         padding: 10px 0;
                     }
+                    .library-search-bar {
+                        display: flex;
+                        gap: 8px;
+                        align-items: center;
+                        margin-left: auto;
+                    }
+                    .library-search-bar input {
+                        padding: 6px 10px;
+                        border: 1px solid #ddd;
+                        border-radius: 6px;
+                        min-width: 180px;
+                    }
+                    .library-search-bar button {
+                        padding: 6px 12px;
+                        border: none;
+                        background: var(--primary-color, #3498db);
+                        color: #fff;
+                        border-radius: 6px;
+                        cursor: pointer;
+                    }
+                    .library-search-bar button:hover {
+                        opacity: 0.9;
+                    }
                     
                     /* 自定义滚动条 */
                     .custom-scrollbar::-webkit-scrollbar { width: 6px; }
@@ -3439,6 +3469,36 @@ async function showServerLibrary() {
                     .directory .tree-icon { color: #f39c12; }
                     .file .tree-icon { color: #3498db; }
                     .dark-mode .file .tree-icon { color: #5dade2; }
+                    .library-search-results {
+                        padding: 8px 16px 4px 16px;
+                        border-bottom: 1px solid #eee;
+                    }
+                    .library-search-results .result-item {
+                        display: flex;
+                        align-items: center;
+                        padding: 8px 0;
+                        border-bottom: 1px dashed #eee;
+                        cursor: pointer;
+                    }
+                    .library-search-results .result-item:last-child {
+                        border-bottom: none;
+                    }
+                    .library-search-results .result-name {
+                        flex: 1;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        font-size: 14px;
+                    }
+                    .library-search-results .result-meta {
+                        font-size: 12px;
+                        color: #999;
+                        margin-left: 10px;
+                    }
+                    .library-search-placeholder {
+                        color: #888;
+                        font-size: 13px;
+                    }
                 `;
         modal.appendChild(style);
 
@@ -3503,6 +3563,54 @@ async function showServerLibrary() {
             });
         });
 
+        // 搜索逻辑
+        const searchInput = modal.querySelector('#library-search-input');
+        const searchBtn = modal.querySelector('#library-search-btn');
+        const resultBox = modal.querySelector('#library-search-results');
+
+        async function performLibrarySearch() {
+            const keyword = searchInput.value.trim();
+            if (!keyword) {
+                resultBox.innerHTML = '<div class="library-search-placeholder">输入关键字快速查找小说</div>';
+                return;
+            }
+            resultBox.innerHTML = '<div class="library-search-placeholder">搜索中...</div>';
+            try {
+                const results = await ipcRenderer.invoke('search-books', keyword, 80);
+                if (!results || results.length === 0) {
+                    resultBox.innerHTML = '<div class="library-search-placeholder">没有找到匹配的小说</div>';
+                    return;
+                }
+                resultBox.innerHTML = results.map(item => {
+                    const sizeMb = (item.size / 1024 / 1024).toFixed(2);
+                    return `<div class="result-item" data-path="${item.path.replace(/"/g, '&quot;')}" data-name="${item.name.replace(/"/g, '&quot;')}" data-size="${item.size}" data-mtime="${item.mtime}">
+                                <span class="result-name">${item.name}</span>
+                                <span class="result-meta">${item.relativePath || ''}</span>
+                                <span class="result-meta">${sizeMb} MB</span>
+                            </div>`;
+                }).join('');
+
+                resultBox.querySelectorAll('.result-item').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const path = el.getAttribute('data-path');
+                        const name = el.getAttribute('data-name');
+                        const size = parseInt(el.getAttribute('data-size') || '0');
+                        const mtime = parseInt(el.getAttribute('data-mtime') || '0');
+                        loadServerBook(path, name, { size, mtime });
+                        closeModal();
+                    });
+                });
+            } catch (err) {
+                console.error('搜索失败:', err);
+                resultBox.innerHTML = '<div class="library-search-placeholder">搜索失败，请稍后重试</div>';
+            }
+        }
+
+        searchBtn.addEventListener('click', performLibrarySearch);
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') performLibrarySearch();
+        });
+
     } catch (error) {
         document.getElementById('loading-overlay').style.display = 'none';
         console.error('获取书库失败:', error);
@@ -3527,6 +3635,8 @@ async function loadAndRenderBook(filePath, fileName, initialPosition = 0, initia
 
         // 保存当前文件路径供后续使用
         window.currentFilePath = filePath;
+        // 应用阅读字体大小
+        document.getElementById('content').style.fontSize = `${fontSize}px`;
 
         // 尝试从缓存加载
         try {
@@ -3737,5 +3847,3 @@ function processFileContent(buffer, fileName, options = {}) {
         });
     });
 }
-
-

@@ -1,17 +1,19 @@
 {
-    "baseDir": "/home/ubuntu/TXT-Novel-Reader/books",
+    "baseDir": "/home/ponsde/TXT-Novel-Reader/books",
     "searchDirs": [
-        "/home/ubuntu/TXT-Novel-Reader/books"
+        "/home/ponsde/TXT-Novel-Reader/xs/旧",
+        "/home/ponsde/TXT-Novel-Reader/books"
     ],
     "wordsPerPage": 4000,
     "maxHistory": 50,
     "fontSize": 18,
     "homePageFontSize": 16,
     "theme": "light",
-    "hiddenLibraryDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧",
-    "hiddenBaseDir": "/home/ubuntu/TXT-Novel-Reader/xs/旧/333",
+    "hiddenLibraryDir": "/home/ponsde/TXT-Novel-Reader/xs/旧",
+    "hiddenBaseDir": "/home/ponsde/TXT-Novel-Reader/xs/旧",
     "hiddenSearchDirs": [
-        "/home/ubuntu/TXT-Novel-Reader/xs/旧",
-        "/home/ubuntu/TXT-Novel-Reader/xs/旧/333"
-    ]
+        "/home/ponsde/TXT-Novel-Reader/xs/旧",
+        "/home/ponsde/TXT-Novel-Reader/xs/旧/333"
+    ],
+    "libraryDir": "/home/ponsde/TXT-Novel-Reader/books"
 }

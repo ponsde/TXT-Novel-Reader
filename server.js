@@ -3,8 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const url = require('url');
 const zlib = require('zlib');
+const os = require('os');
 
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT, 10) || 3000;
+const HOST = getListenHost();
 const fsPromises = fs.promises;
 
 // 模拟 Electron 的 app.getPath('exe')
@@ -16,6 +18,64 @@ const CONFIG_FILE = 'config.json';
 // 全局变量
 // key: baseDir, value: { randomizedBooks: [], allAvailableBooks: [] }
 let randomStateMap = {};
+
+// 从 tailscale0 接口获取 IPv4 地址，确保仅在 Tailscale 网络监听
+function getListenHost() {
+    if (process.env.LISTEN_HOST) return process.env.LISTEN_HOST;
+
+    const ifaces = os.networkInterfaces();
+    for (const [name, entries] of Object.entries(ifaces)) {
+        if (!name.startsWith('tailscale')) continue;
+        for (const entry of entries) {
+            if (entry.family === 'IPv4' && !entry.internal && entry.address) {
+                return entry.address;
+            }
+        }
+    }
+
+    // 未找到 tailscale，回退到本地仅限本机访问
+    return '127.0.0.1';
+}
+
+// 扫描搜索小说（按文件名包含关键字）
+async function searchBooks(keyword, limit = 100) {
+    const config = await apiHandlers['load-config']();
+    const baseDir = config.baseDir || path.join(BASE_DIR, 'books');
+    const libraryDir = config.libraryDir || config.hiddenLibraryDir || '';
+    const searchDirs = config.searchDirs || [];
+    const uniqueDirs = [...new Set([libraryDir, ...searchDirs, baseDir].filter(Boolean))];
+
+    const lowerKeyword = keyword.toLowerCase();
+    const results = [];
+    const seen = new Set();
+
+    for (const dir of uniqueDirs) {
+        const txtFiles = await getAllTxtFiles(dir);
+        for (const filePath of txtFiles) {
+            if (seen.has(filePath)) continue;
+            seen.add(filePath);
+
+            const name = path.basename(filePath);
+            if (!name.toLowerCase().includes(lowerKeyword)) continue;
+
+            let stat = null;
+            try {
+                stat = await fsPromises.stat(filePath);
+            } catch (_) { }
+
+            results.push({
+                name,
+                path: filePath,
+                relativePath: path.relative(dir, filePath),
+                size: stat ? stat.size : 0,
+                mtime: stat ? stat.mtime.getTime() : 0
+            });
+
+            if (results.length >= limit) return results;
+        }
+    }
+    return results;
+}
 
 // 辅助函数：加载随机状态
 async function loadRandomState() {
@@ -191,7 +251,13 @@ const apiHandlers = {
             const deletedPath = path.join(BASE_DIR, filename);
             if (fs.existsSync(deletedPath)) {
                 const data = await fsPromises.readFile(deletedPath, 'utf8');
-                let currentDeleted = JSON.parse(data);
+                let currentDeleted = [];
+                try {
+                    currentDeleted = JSON.parse(data);
+                    if (!Array.isArray(currentDeleted)) currentDeleted = [];
+                } catch (e) {
+                    currentDeleted = [];
+                }
                 const removeSet = new Set(itemsToRemove);
                 currentDeleted = currentDeleted.filter(item => !removeSet.has(item));
                 await fsPromises.writeFile(deletedPath, JSON.stringify(currentDeleted, null, 4));
@@ -221,7 +287,7 @@ const apiHandlers = {
 
     'load-config': async () => {
         const configPath = path.join(BASE_DIR, CONFIG_FILE);
-        // 优先使用环境变量中的 BOOKS_DIR
+        // 环境变量 BOOKS_DIR 仅作为默认值，不强制覆盖用户选择
         const envBooksDir = process.env.BOOKS_DIR;
 
         if (!fs.existsSync(configPath)) {
@@ -248,31 +314,62 @@ const apiHandlers = {
         // 这对于从其他环境（如 Windows）迁移过来的配置文件很有用
         let configChanged = false;
 
-        // 如果环境变量设置了 BOOKS_DIR，覆盖配置
-        if (envBooksDir && config.baseDir !== envBooksDir) {
-            config.baseDir = envBooksDir;
-            config.searchDirs = [envBooksDir]; // 重置搜索目录
+        // 只有当 baseDir 为空时才采用 env 作为默认
+        if (!config.baseDir) {
+            config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
             configChanged = true;
         }
 
-        if (!config.baseDir || !fs.existsSync(config.baseDir)) {
-            config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
+        if (!config.searchDirs || !Array.isArray(config.searchDirs)) {
             config.searchDirs = [config.baseDir];
             configChanged = true;
+        }
 
-            // 确保 books 目录存在
+        // 如果 baseDir 不存在，退回默认
+        if (!fs.existsSync(config.baseDir)) {
+            config.baseDir = envBooksDir || path.join(BASE_DIR, 'books');
+            if (!config.searchDirs.includes(config.baseDir)) {
+                config.searchDirs = [config.baseDir];
+            }
+            configChanged = true;
             if (!fs.existsSync(config.baseDir)) {
                 try { await fsPromises.mkdir(config.baseDir, { recursive: true }); } catch (e) { }
             }
         }
 
-        if (!config.searchDirs) {
-            config.searchDirs = [config.baseDir];
+        // 确保 baseDir 在 searchDirs 中
+        if (!config.searchDirs.includes(config.baseDir)) {
+            config.searchDirs.unshift(config.baseDir);
+            configChanged = true;
+        }
+
+        // 过滤不存在的 searchDirs/hiddenSearchDirs
+        const filterExisting = (arr) => Array.from(new Set((arr || []).filter(p => p && fs.existsSync(p))));
+        const filteredSearch = filterExisting(config.searchDirs);
+        if (filteredSearch.length !== (config.searchDirs || []).length) {
+            config.searchDirs = filteredSearch;
+            configChanged = true;
+        }
+
+        if (config.hiddenSearchDirs) {
+            const filteredHidden = filterExisting(config.hiddenSearchDirs);
+            if (filteredHidden.length !== config.hiddenSearchDirs.length) {
+                config.hiddenSearchDirs = filteredHidden;
+                configChanged = true;
+            }
+        }
+
+        // 隐私模式基准目录兜底
+        if (config.hiddenBaseDir && !fs.existsSync(config.hiddenBaseDir)) {
+            config.hiddenBaseDir = config.baseDir;
+            configChanged = true;
+        }
+        if (config.hiddenBaseDir && config.hiddenSearchDirs && !config.hiddenSearchDirs.includes(config.hiddenBaseDir)) {
+            config.hiddenSearchDirs.unshift(config.hiddenBaseDir);
             configChanged = true;
         }
 
         if (configChanged) {
-            // 保存修正后的配置
             await fsPromises.writeFile(configPath, JSON.stringify(config, null, 4));
         }
 
@@ -350,8 +447,8 @@ const apiHandlers = {
             } catch (e) { }
         }
 
-        // 如果环境变量强制指定，则使用环境变量
-        if (process.env.BOOKS_DIR) {
+        // 环境变量仅作为最后兜底
+        if (!libraryDir && process.env.BOOKS_DIR) {
             libraryDir = process.env.BOOKS_DIR;
         }
 
@@ -381,12 +478,10 @@ const apiHandlers = {
 
     // 列出指定目录下的文件夹（用于Web端选择路径）
     'list-directory': async (args) => {
-        let dirPath = args[0];
+        let dirPath = args && args[0];
+        const includeFiles = args && args[1] !== false; // 默认包含文件
 
-        // 如果未指定路径，默认使用当前工作目录或根目录
-        if (!dirPath) {
-            dirPath = process.cwd();
-        }
+        if (!dirPath) dirPath = process.cwd();
 
         try {
             const items = [];
@@ -404,29 +499,38 @@ const apiHandlers = {
             }
 
             for (const entry of entries) {
+                const fullPath = path.join(dirPath, entry.name);
                 if (entry.isDirectory()) {
-                    // 忽略隐藏目录
                     if (entry.name.startsWith('.')) continue;
-
                     items.push({
                         name: entry.name,
-                        path: path.join(dirPath, entry.name),
+                        path: fullPath,
                         type: 'directory'
+                    });
+                } else if (includeFiles && entry.isFile() && entry.name.toLowerCase().endsWith('.txt')) {
+                    const stats = await fsPromises.stat(fullPath).catch(() => null);
+                    items.push({
+                        name: entry.name,
+                        path: fullPath,
+                        type: 'file',
+                        size: stats ? stats.size : 0,
+                        mtime: stats ? stats.mtime.getTime() : 0
                     });
                 }
             }
 
-            // 排序
             items.sort((a, b) => {
                 if (a.isParent) return -1;
                 if (b.isParent) return 1;
-                return a.name.localeCompare(b.name);
+                if (a.type === b.type) return a.name.localeCompare(b.name);
+                return a.type === 'directory' ? -1 : 1;
             });
 
             return {
                 currentPath: dirPath,
-                items: items,
-                separator: path.sep
+                items,
+                separator: path.sep,
+                truncated: false
             };
         } catch (error) {
             console.error(`列出目录失败 ${dirPath}:`, error);
@@ -452,6 +556,19 @@ const apiHandlers = {
             return null;
         }
         return await searchInDir(baseDir);
+    },
+
+    // 按文件名关键字搜索小说
+    'search-books': async (args) => {
+        const keyword = (args && args[0] || '').trim();
+        const limit = (args && args[1]) || 100;
+        if (!keyword) return [];
+        try {
+            return await searchBooks(keyword, limit);
+        } catch (error) {
+            console.error('搜索小说失败:', error);
+            return [];
+        }
     },
 
     'get-random-file': async (args) => {
@@ -738,10 +855,11 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-server.listen(PORT, 'localhost', () => {
+server.listen(PORT, HOST, () => {
     console.log(`\n=== 优雅阅读器 Web 服务已启动 ===`);
+    console.log(`监听地址: ${HOST}`);
     console.log(`端口: ${PORT}`);
-    console.log(`Server running at http://localhost:${PORT}/`);
+    console.log(`Server running at http://${HOST}:${PORT}/`);
 });
 
 // 恢复默认超时设置
